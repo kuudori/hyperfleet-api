@@ -7,7 +7,7 @@ This document describes authentication mechanisms for the HyperFleet API.
 HyperFleet API supports two authentication modes:
 
 1. **Development Mode (No Auth)**: For local development and testing
-2. **Production Mode (OCM Auth)**: JWT-based authentication via OpenShift Cluster Manager
+2. **Production Mode (JWT Auth)**: JWT-based authentication with configurable issuer
 
 ## Development Mode (No Auth)
 
@@ -32,9 +32,9 @@ export AUTH_ENABLED=false
 
 **Important**: Never disable authentication in production environments.
 
-## Production Mode (OCM Auth)
+## Production Mode (JWT Auth)
 
-Production deployments use JWT-based authentication integrated with OpenShift Cluster Manager (OCM).
+Production deployments use JWT-based authentication with a configurable issuer.
 
 ### Usage
 
@@ -42,16 +42,14 @@ Production deployments use JWT-based authentication integrated with OpenShift Cl
 # Start service with authentication
 make run
 
-# Login to OCM
-ocm login --token=${OCM_ACCESS_TOKEN} --url=http://localhost:8000
-
-# Access API with authentication
-ocm get /api/hyperfleet/v1/clusters
+# Access API with a valid JWT
+curl -H "Authorization: Bearer ${TOKEN}" \
+  http://localhost:8000/api/hyperfleet/v1/clusters
 ```
 
 ### JWT Authentication
 
-HyperFleet API validates JWT tokens issued by Red Hat SSO.
+HyperFleet API validates JWT tokens using RS256 signature verification.
 
 **Token validation checks:**
 1. Signature - Token signed by trusted issuer
@@ -107,7 +105,6 @@ export AUTH_ENABLED=false
 
 # Production (with auth)
 export AUTH_ENABLED=true
-export OCM_URL=https://api.openshift.com
 export JWT_ISSUER=https://sso.redhat.com/auth/realms/redhat-external
 export JWT_AUDIENCE=https://api.openshift.com
 ```
@@ -122,7 +119,6 @@ Configure via Helm values:
 # values.yaml
 auth:
   enabled: true
-  ocmUrl: https://api.openshift.com
   jwtIssuer: https://sso.redhat.com/auth/realms/redhat-external
   jwtAudience: https://api.openshift.com
 ```
@@ -152,7 +148,7 @@ helm install hyperfleet-api ./charts/ --values values.yaml
 echo $TOKEN | cut -d. -f2 | base64 -d | jq
 
 # Check token expiration
-ocm token --refresh
+echo $TOKEN | cut -d. -f2 | base64 -d | jq '.exp | todate'
 ```
 
 ## Related Documentation
