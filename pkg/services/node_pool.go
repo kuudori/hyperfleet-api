@@ -1,7 +1,6 @@
 package services
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -120,7 +119,7 @@ func (s *sqlNodePoolService) Patch(
 		return nil, errors.Validation("Invalid patch data: %v", applyErr)
 	}
 
-	if bytes.Equal(oldSpec, nodePool.Spec) && bytes.Equal(oldLabels, nodePool.Labels) {
+	if jsonEqual(oldSpec, nodePool.Spec) && jsonEqual(oldLabels, nodePool.Labels) {
 		return nodePool, nil
 	}
 

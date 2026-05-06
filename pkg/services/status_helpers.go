@@ -1,7 +1,6 @@
 package services
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 
@@ -41,7 +40,7 @@ func computeNodePoolConditionsJSON(
 		return nil, errors.GeneralError("Failed to marshal conditions: %s", err)
 	}
 
-	if bytes.Equal(np.StatusConditions, conditionsJSON) {
+	if jsonEqual(np.StatusConditions, conditionsJSON) {
 		return nil, nil
 	}
 

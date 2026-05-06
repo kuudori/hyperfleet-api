@@ -1,7 +1,6 @@
 package services
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -110,7 +109,7 @@ func (s *sqlClusterService) Patch(
 		return nil, errors.Validation("Invalid patch data: %v", applyErr)
 	}
 
-	if bytes.Equal(oldSpec, cluster.Spec) && bytes.Equal(oldLabels, cluster.Labels) {
+	if jsonEqual(oldSpec, cluster.Spec) && jsonEqual(oldLabels, cluster.Labels) {
 		return cluster, nil
 	}
 
@@ -287,7 +286,7 @@ func (s *sqlClusterService) recomputeAndSaveClusterStatus(
 		return nil, errors.GeneralError("Failed to marshal conditions: %s", err)
 	}
 
-	if bytes.Equal(cluster.StatusConditions, conditionsJSON) {
+	if jsonEqual(cluster.StatusConditions, conditionsJSON) {
 		return cluster, nil
 	}
 

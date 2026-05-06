@@ -1796,6 +1796,56 @@ func TestClusterPatch(t *testing.T) {
 		g.Expect(result.Generation).To(Equal(int32(2)))
 	})
 
+	t.Run("spec unchanged with different key order keeps generation", func(t *testing.T) {
+		t.Parallel()
+		g := NewWithT(t)
+		clusterDao := newMockClusterDao()
+		nodePoolDao := newMockNodePoolDao()
+		adapterStatusDao := newMockAdapterStatusDao()
+		adapterConfig := testAdapterConfig()
+		adapterConfig.Required.Cluster = []string{}
+		service := NewClusterService(clusterDao, nodePoolDao, newMockNodePoolService(), adapterStatusDao, adapterConfig)
+		ctx := context.Background()
+
+		clusterDao.clusters["c1"] = &api.Cluster{
+			Meta:       api.Meta{ID: "c1"},
+			Spec:       []byte(`{"z":"last","a":"first","m":"middle"}`),
+			Labels:     []byte(`{}`),
+			Generation: 5,
+		}
+
+		sameSpec := map[string]interface{}{"z": "last", "a": "first", "m": "middle"}
+		result, svcErr := service.Patch(ctx, "c1", &api.ClusterPatchRequest{Spec: &sameSpec})
+
+		g.Expect(svcErr).To(BeNil())
+		g.Expect(result.Generation).To(Equal(int32(5)))
+	})
+
+	t.Run("labels unchanged with different key order keeps generation", func(t *testing.T) {
+		t.Parallel()
+		g := NewWithT(t)
+		clusterDao := newMockClusterDao()
+		nodePoolDao := newMockNodePoolDao()
+		adapterStatusDao := newMockAdapterStatusDao()
+		adapterConfig := testAdapterConfig()
+		adapterConfig.Required.Cluster = []string{}
+		service := NewClusterService(clusterDao, nodePoolDao, newMockNodePoolService(), adapterStatusDao, adapterConfig)
+		ctx := context.Background()
+
+		clusterDao.clusters["c1"] = &api.Cluster{
+			Meta:       api.Meta{ID: "c1"},
+			Spec:       []byte(`{}`),
+			Labels:     []byte(`{"z":"zulu","a":"alpha"}`),
+			Generation: 4,
+		}
+
+		sameLabels := map[string]string{"z": "zulu", "a": "alpha"}
+		result, svcErr := service.Patch(ctx, "c1", &api.ClusterPatchRequest{Labels: &sameLabels})
+
+		g.Expect(svcErr).To(BeNil())
+		g.Expect(result.Generation).To(Equal(int32(4)))
+	})
+
 	t.Run("not found returns 404", func(t *testing.T) {
 		t.Parallel()
 		g := NewWithT(t)
