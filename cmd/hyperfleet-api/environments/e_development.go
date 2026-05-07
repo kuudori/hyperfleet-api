@@ -26,9 +26,6 @@ func (e *devEnvImpl) OverrideConfig(c *config.ApplicationConfig) error {
 		c.Database.SSL.Mode = SSLModeDisable
 	}
 
-	// Enable OCM mocks for development (no real OCM connection needed)
-	c.OCM.Mock.Enabled = true
-
 	return nil
 }
 
@@ -37,10 +34,6 @@ func (e *devEnvImpl) OverrideServices(s *Services) error {
 }
 
 func (e *devEnvImpl) OverrideHandlers(h *Handlers) error {
-	return nil
-}
-
-func (e *devEnvImpl) OverrideClients(c *Clients) error {
 	return nil
 }
 

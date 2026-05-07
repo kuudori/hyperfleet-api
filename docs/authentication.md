@@ -7,7 +7,7 @@ This document describes authentication mechanisms for the HyperFleet API.
 HyperFleet API supports two authentication modes:
 
 1. **Development Mode (No Auth)**: For local development and testing
-2. **Production Mode (OCM Auth)**: JWT-based authentication via OpenShift Cluster Manager
+2. **Production Mode (JWT Auth)**: JWT-based authentication with configurable issuer
 
 ## Development Mode (No Auth)
 
@@ -26,15 +26,15 @@ curl http://localhost:8000/api/hyperfleet/v1/clusters | jq
 ### Configuration
 
 ```bash
-export AUTH_ENABLED=false
+export HYPERFLEET_SERVER_JWT_ENABLED=false
 ./bin/hyperfleet-api serve
 ```
 
 **Important**: Never disable authentication in production environments.
 
-## Production Mode (OCM Auth)
+## Production Mode (JWT Auth)
 
-Production deployments use JWT-based authentication integrated with OpenShift Cluster Manager (OCM).
+Production deployments use JWT-based authentication with a configurable issuer.
 
 ### Usage
 
@@ -42,21 +42,19 @@ Production deployments use JWT-based authentication integrated with OpenShift Cl
 # Start service with authentication
 make run
 
-# Login to OCM
-ocm login --token=${OCM_ACCESS_TOKEN} --url=http://localhost:8000
-
-# Access API with authentication
-ocm get /api/hyperfleet/v1/clusters
+# Access API with a valid JWT
+curl -H "Authorization: Bearer ${TOKEN}" \
+  http://localhost:8000/api/hyperfleet/v1/clusters
 ```
 
 ### JWT Authentication
 
-HyperFleet API validates JWT tokens issued by Red Hat SSO.
+HyperFleet API validates JWT tokens using RS256 signature verification.
 
 **Token validation checks:**
 1. Signature - Token signed by trusted issuer
-2. Issuer - Matches configured `JWT_ISSUER`
-3. Audience - Matches configured `JWT_AUDIENCE`
+2. Issuer - Matches configured `HYPERFLEET_SERVER_JWT_ISSUER_URL`
+3. Audience - Matches configured `HYPERFLEET_SERVER_JWT_AUDIENCE`
 4. Expiration - Token not expired
 5. Claims - Required claims present
 
@@ -71,45 +69,18 @@ curl -H "Authorization: Bearer ${TOKEN}" \
   http://localhost:8000/api/hyperfleet/v1/clusters
 ```
 
-## Authorization
-
-HyperFleet API implements resource-based authorization.
-
-### Resource Ownership
-
-Resources track ownership via `created_by` and `updated_by` fields:
-
-```json
-{
-  "id": "cluster-123",
-  "name": "my-cluster",
-  "created_by": "user@example.com",
-  "updated_by": "user@example.com"
-}
-```
-
-### Access Control
-
-- **Create**: Users can create resources
-- **Read**: Users can read resources they created or have access to
-- **Update**: Users can update resources they own
-- **Delete**: Users can delete resources they own
-
-Users within the same organization can access shared resources based on organizational membership.
-
 ## Configuration
 
 ### Environment Variables
 
 ```bash
 # Development (no auth)
-export AUTH_ENABLED=false
+export HYPERFLEET_SERVER_JWT_ENABLED=false
 
 # Production (with auth)
-export AUTH_ENABLED=true
-export OCM_URL=https://api.openshift.com
-export JWT_ISSUER=https://sso.redhat.com/auth/realms/redhat-external
-export JWT_AUDIENCE=https://api.openshift.com
+export HYPERFLEET_SERVER_JWT_ENABLED=true
+export HYPERFLEET_SERVER_JWT_ISSUER_URL=https://your-idp.example.com/auth/realms/your-realm
+export HYPERFLEET_SERVER_JWT_AUDIENCE=https://your-api.example.com
 ```
 
 See [Deployment](deployment.md) for complete configuration options.
@@ -120,11 +91,12 @@ Configure via Helm values:
 
 ```yaml
 # values.yaml
-auth:
-  enabled: true
-  ocmUrl: https://api.openshift.com
-  jwtIssuer: https://sso.redhat.com/auth/realms/redhat-external
-  jwtAudience: https://api.openshift.com
+config:
+  server:
+    jwt:
+      enabled: true
+      issuer_url: https://your-idp.example.com/auth/realms/your-realm
+      audience: https://your-api.example.com
 ```
 
 Deploy:
@@ -138,13 +110,8 @@ helm install hyperfleet-api ./charts/ --values values.yaml
 
 **401 Unauthorized**
 - Check token is valid and not expired
-- Verify `JWT_ISSUER` and `JWT_AUDIENCE` match token claims
+- Verify `HYPERFLEET_SERVER_JWT_ISSUER_URL` and `HYPERFLEET_SERVER_JWT_AUDIENCE` match token claims
 - Ensure `Authorization` header is correctly formatted
-
-**403 Forbidden**
-- User authenticated but lacks permissions
-- Check resource ownership
-- Verify organizational membership
 
 **Token debugging**
 ```bash
@@ -152,7 +119,7 @@ helm install hyperfleet-api ./charts/ --values values.yaml
 echo $TOKEN | cut -d. -f2 | base64 -d | jq
 
 # Check token expiration
-ocm token --refresh
+echo $TOKEN | cut -d. -f2 | base64 -d | jq '.exp | todate'
 ```
 
 ## Related Documentation

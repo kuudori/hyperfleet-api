@@ -25,6 +25,10 @@ func TestConfigLoader_ExplicitConfigFlag(t *testing.T) {
 server:
   host: "config-file-host"
   port: 9999
+  jwt:
+    issuer_url: "https://test-idp.example.com/auth/realms/test"
+  jwk:
+    cert_url: "https://test-idp.example.com/certs"
 database:
   host: "localhost"
   port: 5432
@@ -33,8 +37,6 @@ database:
   password: "testpass"
 logging:
   level: "debug"
-ocm:
-  base_url: "https://config.example.com"
 metrics:
   host: "localhost"
   port: 9090
@@ -175,8 +177,6 @@ database:
   password: "test"
 logging:
   level: "info"
-ocm:
-  base_url: "https://api.example.com"
 metrics:
   host: "localhost"
   port: 9090
@@ -269,6 +269,10 @@ func TestConfigLoader_CompletePriorityChain(t *testing.T) {
 server:
   host: "file-host"
   port: 7000
+  jwt:
+    issuer_url: "https://test-idp.example.com/auth/realms/test"
+  jwk:
+    cert_url: "https://test-idp.example.com/certs"
 database:
   host: "file-db"
   port: 5432
@@ -278,8 +282,6 @@ database:
 logging:
   level: "info"
   format: "file-format"
-ocm:
-  base_url: "https://api.example.com"
 metrics:
   host: "localhost"
   port: 9090

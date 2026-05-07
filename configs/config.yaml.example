@@ -19,16 +19,12 @@ server:
 
   jwt:
     enabled: true                   # Enable JWT authentication
-
-  authz:
-    enabled: true                   # Enable authorization
+    issuer_url: ""                  # JWT issuer URL (required when jwt.enabled=true)
+    audience: ""                    # JWT audience claim (optional)
 
   jwk:
     cert_file: ""                   # JWK certificate file path
-    cert_url: "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/certs"
-
-  acl:
-    file: ""                        # Access control list file
+    cert_url: ""                    # JWK certificate URL (required when jwt.enabled=true and cert_file is not set)
 
 # Database Configuration
 database:
@@ -81,17 +77,6 @@ logging:
       - refresh_token
       - client_secret
 
-# OCM (OpenShift Cluster Manager) Configuration
-ocm:
-  base_url: https://api.integration.openshift.com  # OCM API base URL
-  client_id: ""                     # OCM client ID (use env var HYPERFLEET_OCM_CLIENT_ID instead)
-  client_secret: ""                 # OCM client secret (use env var HYPERFLEET_OCM_CLIENT_SECRET instead)
-  self_token: ""                    # OCM self token (use env var HYPERFLEET_OCM_SELF_TOKEN instead)
-  token_url: https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token
-  debug: false                      # Enable OCM debug mode
-
-  mock:
-    enabled: true                   # Enable mock OCM clients (for testing)
 
 # Metrics Configuration
 metrics:
@@ -160,7 +145,7 @@ adapters:
 # Sensitive values can be loaded from files using *_FILE environment variables.
 # The file content will be read and used as the configuration value.
 #
-# Note: File path fields (cert_file, key_file, acl.file, etc.) should be set
+# Note: File path fields (cert_file, key_file, etc.) should be set
 # directly via environment variables, not loaded from files, since they already
 # represent file paths. Use HYPERFLEET_SERVER_TLS_CERT_FILE=/path/to/cert.pem
 # to set the path directly.
@@ -171,9 +156,6 @@ adapters:
 # - HYPERFLEET_DATABASE_USERNAME_FILE=/secrets/db-username
 # - HYPERFLEET_DATABASE_PASSWORD_FILE=/secrets/db-password
 # - HYPERFLEET_DATABASE_NAME_FILE=/secrets/db-name
-# - HYPERFLEET_OCM_CLIENT_ID_FILE=/secrets/ocm-client-id
-# - HYPERFLEET_OCM_CLIENT_SECRET_FILE=/secrets/ocm-client-secret
-# - HYPERFLEET_OCM_SELF_TOKEN_FILE=/secrets/ocm-self-token
 #
 # OpenTelemetry Tracing Configuration:
 # HyperFleet uses standard OpenTelemetry environment variables for tracing.

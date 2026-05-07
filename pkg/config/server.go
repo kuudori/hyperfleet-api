@@ -10,16 +10,14 @@ import (
 // ServerConfig holds HTTP/HTTPS server configuration
 // Follows HyperFleet Configuration Standard
 type ServerConfig struct {
-	JWK               JWKConfig      `mapstructure:"jwk" json:"jwk" validate:"required"`
 	Hostname          string         `mapstructure:"hostname" json:"hostname" validate:"omitempty,hostname|ip"`
 	Host              string         `mapstructure:"host" json:"host" validate:"required,hostname|ip"`
 	OpenAPISchemaPath string         `mapstructure:"openapi_schema_path" json:"openapi_schema_path"`
-	ACL               ACLConfig      `mapstructure:"acl" json:"acl" validate:"required"`
+	JWK               JWKConfig      `mapstructure:"jwk" json:"jwk" validate:"required"`
 	TLS               TLSConfig      `mapstructure:"tls" json:"tls" validate:"required"`
+	JWT               JWTConfig      `mapstructure:"jwt" json:"jwt" validate:"required"`
 	Timeouts          TimeoutsConfig `mapstructure:"timeouts" json:"timeouts" validate:"required"`
 	Port              int            `mapstructure:"port" json:"port" validate:"required,min=1,max=65535"`
-	JWT               JWTConfig      `mapstructure:"jwt" json:"jwt" validate:"required"`
-	Authz             AuthzConfig    `mapstructure:"authz" json:"authz" validate:"required"`
 }
 
 // TimeoutsConfig holds HTTP timeout configuration
@@ -63,23 +61,25 @@ func (c *TLSConfig) Validate() error {
 
 // JWTConfig holds JWT authentication configuration
 type JWTConfig struct {
-	Enabled bool `mapstructure:"enabled" json:"enabled"`
+	IssuerURL string `mapstructure:"issuer_url" json:"issuer_url" validate:"omitempty,url"`
+	Audience  string `mapstructure:"audience" json:"audience"`
+	Enabled   bool   `mapstructure:"enabled" json:"enabled"`
+}
+
+func (c *JWTConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.IssuerURL == "" {
+		return fmt.Errorf("server.jwt.issuer_url is required when jwt is enabled")
+	}
+	return nil
 }
 
 // JWKConfig holds JWK certificate configuration
 type JWKConfig struct {
 	CertFile string `mapstructure:"cert_file" json:"cert_file" validate:"omitempty,filepath"`
 	CertURL  string `mapstructure:"cert_url" json:"cert_url" validate:"omitempty,url"`
-}
-
-// AuthzConfig holds authorization configuration
-type AuthzConfig struct {
-	Enabled bool `mapstructure:"enabled" json:"enabled"`
-}
-
-// ACLConfig holds access control list configuration
-type ACLConfig struct {
-	File string `mapstructure:"file" json:"file" validate:"omitempty,filepath"`
 }
 
 // NewServerConfig returns default ServerConfig values
@@ -100,17 +100,13 @@ func NewServerConfig() *ServerConfig {
 			KeyFile:  "",
 		},
 		JWT: JWTConfig{
-			Enabled: true,
+			Enabled:   true,
+			IssuerURL: "",
+			Audience:  "",
 		},
 		JWK: JWKConfig{
 			CertFile: "",
-			CertURL:  "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/certs",
-		},
-		Authz: AuthzConfig{
-			Enabled: true,
-		},
-		ACL: ACLConfig{
-			File: "",
+			CertURL:  "",
 		},
 	}
 }

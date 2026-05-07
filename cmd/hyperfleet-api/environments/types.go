@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/auth"
-	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/client/ocm"
 	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/config"
 	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/db"
 )
@@ -15,7 +14,7 @@ const (
 	DevelopmentEnv        string = "development"
 	ProductionEnv         string = "production"
 
-	EnvironmentStringKey string = "OCM_ENV"
+	EnvironmentStringKey string = "HYPERFLEET_ENV"
 	EnvironmentDefault          = DevelopmentEnv
 
 	// Database SSL modes
@@ -25,7 +24,6 @@ const (
 type Env struct {
 	Handlers Handlers
 	Database Database
-	Clients  Clients
 	Config   *config.ApplicationConfig
 	Name     string
 	Services Services
@@ -64,18 +62,6 @@ func (s *Services) SetService(name string, service interface{}) {
 		s.serviceRegistry = make(map[string]interface{})
 	}
 	s.serviceRegistry[name] = service
-}
-
-type Clients struct {
-	OCM *ocm.Client
-}
-
-type ConfigDefaults struct {
-	Server   map[string]interface{}
-	Metrics  map[string]interface{}
-	Database map[string]interface{}
-	OCM      map[string]interface{}
-	Options  map[string]interface{}
 }
 
 var (

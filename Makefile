@@ -65,25 +65,19 @@ db_password_file := ${PWD}/secrets/db.password
 db_sslmode := disable
 db_image ?= docker.io/library/postgres:14.2
 
-# Location of the JSON web key set used to verify tokens
-jwks_url := https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/certs
-
 # Test output files
 unit_test_json_output ?= ${PWD}/unit-test-results.json
 integration_test_json_output ?= ${PWD}/integration-test-results.json
 
 ### Environment-sourced variables with defaults
-ifndef OCM_ENV
-	OCM_ENV := development
+ifndef HYPERFLEET_ENV
+	HYPERFLEET_ENV := development
 endif
 
 ifndef TEST_SUMMARY_FORMAT
 	TEST_SUMMARY_FORMAT = short-verbose
 endif
 
-ifndef OCM_BASE_URL
-	OCM_BASE_URL := "https://api.integration.openshift.com"
-endif
 
 .PHONY: help
 help: ## Display this help
@@ -154,7 +148,7 @@ run: build ## Run the application
 .PHONY: run-no-auth
 run-no-auth: build ## Run the application without auth
 	./bin/hyperfleet-api migrate
-	./bin/hyperfleet-api serve --enable-authz=false --enable-jwt=false
+	./bin/hyperfleet-api serve --server-jwt-enabled=false
 
 .PHONY: run/docs
 run/docs: check-container-tool ## Run swagger and host the api spec
@@ -191,33 +185,31 @@ secrets: ## Initialize secrets directory with default values
 	@printf "$(db_password)" > secrets/db.password
 	@printf "$(db_port)" > secrets/db.port
 	@printf "$(db_user)" > secrets/db.user
-	@printf "ocm-hyperfleet-testing" > secrets/ocm-service.clientId
-	@printf "your-client-secret-here" > secrets/ocm-service.clientSecret
-	@printf "your-token-here" > secrets/ocm-service.token
+
 	@echo "Secrets directory initialized with default values"
 
 ##@ Testing
 
 .PHONY: test
 test: install secrets $(GOTESTSUM) ## Run unit tests
-	OCM_ENV=unit_testing $(GOTESTSUM) --format $(TEST_SUMMARY_FORMAT) -- -p 1 -v $(TESTFLAGS) \
+	HYPERFLEET_ENV=unit_testing $(GOTESTSUM) --format $(TEST_SUMMARY_FORMAT) -- -p 1 -v $(TESTFLAGS) \
 		./pkg/... \
 		./cmd/...
 
 .PHONY: ci-test-unit
 ci-test-unit: install secrets $(GOTESTSUM) ## Run unit tests with JSON output
-	OCM_ENV=unit_testing $(GOTESTSUM) --jsonfile-timing-events=$(unit_test_json_output) --format $(TEST_SUMMARY_FORMAT) -- -p 1 -v $(TESTFLAGS) \
+	HYPERFLEET_ENV=unit_testing $(GOTESTSUM) --jsonfile-timing-events=$(unit_test_json_output) --format $(TEST_SUMMARY_FORMAT) -- -p 1 -v $(TESTFLAGS) \
 		./pkg/... \
 		./cmd/...
 
 .PHONY: test-integration
 test-integration: install secrets $(GOTESTSUM) ## Run integration tests
-	TESTCONTAINERS_RYUK_DISABLED=true OCM_ENV=integration_testing $(GOTESTSUM) --format $(TEST_SUMMARY_FORMAT) -- -p 1 -ldflags -s -v -timeout 1h $(TESTFLAGS) \
+	TESTCONTAINERS_RYUK_DISABLED=true HYPERFLEET_ENV=integration_testing $(GOTESTSUM) --format $(TEST_SUMMARY_FORMAT) -- -p 1 -ldflags -s -v -timeout 1h $(TESTFLAGS) \
 			./test/integration
 
 .PHONY: ci-test-integration
 ci-test-integration: install secrets $(GOTESTSUM) ## Run integration tests with JSON output
-	TESTCONTAINERS_RYUK_DISABLED=true OCM_ENV=integration_testing $(GOTESTSUM) --jsonfile-timing-events=$(integration_test_json_output) --format $(TEST_SUMMARY_FORMAT) -- -p 1 -ldflags -s -v -timeout 1h $(TESTFLAGS) \
+	TESTCONTAINERS_RYUK_DISABLED=true HYPERFLEET_ENV=integration_testing $(GOTESTSUM) --jsonfile-timing-events=$(integration_test_json_output) --format $(TEST_SUMMARY_FORMAT) -- -p 1 -ldflags -s -v -timeout 1h $(TESTFLAGS) \
 			./test/integration
 
 .PHONY: test-all
@@ -329,8 +321,7 @@ test-helm: ## Test Helm charts (lint, template, validate)
 		--set image.tag=test \
 		--set 'adapters.cluster=["validation"]' \
 		--set 'adapters.nodepool=["validation"]' \
-		--set auth.enableJwt=false \
-		--set auth.enableAuthz=false > /dev/null
+		--set config.server.jwt.enabled=false > /dev/null
 	@echo "Auth disabled config template OK"
 	@echo ""
 	@echo "Testing template with custom image..."

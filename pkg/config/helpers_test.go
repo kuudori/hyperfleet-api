@@ -29,9 +29,6 @@ func SetMinimalTestEnv(t *testing.T) {
 	// Logging config - minimal required
 	t.Setenv("HYPERFLEET_LOGGING_LEVEL", "info")
 
-	// OCM config - minimal required
-	t.Setenv("HYPERFLEET_OCM_BASE_URL", "https://api.example.com")
-
 	// Metrics config - using new structure (host + port)
 	t.Setenv("HYPERFLEET_METRICS_HOST", "localhost")
 	t.Setenv("HYPERFLEET_METRICS_PORT", "9090")
@@ -39,6 +36,10 @@ func SetMinimalTestEnv(t *testing.T) {
 	// Health config - using new structure (host + port)
 	t.Setenv("HYPERFLEET_HEALTH_HOST", "localhost")
 	t.Setenv("HYPERFLEET_HEALTH_PORT", "8080")
+
+	// JWT config - required when JWT is enabled (default)
+	t.Setenv("HYPERFLEET_SERVER_JWT_ISSUER_URL", "https://test-idp.example.com/auth/realms/test")
+	t.Setenv("HYPERFLEET_SERVER_JWK_CERT_URL", "https://test-idp.example.com/certs")
 
 	// Adapters config - empty arrays are valid
 	t.Setenv("HYPERFLEET_ADAPTERS_REQUIRED_CLUSTER", `[]`)
