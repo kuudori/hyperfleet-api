@@ -23,15 +23,15 @@ type ClusterDao interface {
 var _ ClusterDao = &sqlClusterDao{}
 
 type sqlClusterDao struct {
-	sessionFactory *db.SessionFactory
+	sessionFactory db.SessionFactory
 }
 
-func NewClusterDao(sessionFactory *db.SessionFactory) ClusterDao {
+func NewClusterDao(sessionFactory db.SessionFactory) ClusterDao {
 	return &sqlClusterDao{sessionFactory: sessionFactory}
 }
 
 func (d *sqlClusterDao) Get(ctx context.Context, id string) (*api.Cluster, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	var cluster api.Cluster
 	if err := g2.Take(&cluster, "id = ?", id).Error; err != nil {
 		return nil, err
@@ -40,7 +40,7 @@ func (d *sqlClusterDao) Get(ctx context.Context, id string) (*api.Cluster, error
 }
 
 func (d *sqlClusterDao) GetForUpdate(ctx context.Context, id string) (*api.Cluster, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	var cluster api.Cluster
 	if err := g2.Clauses(clause.Locking{Strength: "UPDATE"}).Take(&cluster, "id = ?", id).Error; err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func (d *sqlClusterDao) GetForUpdate(ctx context.Context, id string) (*api.Clust
 }
 
 func (d *sqlClusterDao) Create(ctx context.Context, cluster *api.Cluster) (*api.Cluster, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	if err := g2.Omit(clause.Associations).Create(cluster).Error; err != nil {
 		db.MarkForRollback(ctx, err)
 		return nil, err
@@ -58,7 +58,7 @@ func (d *sqlClusterDao) Create(ctx context.Context, cluster *api.Cluster) (*api.
 }
 
 func (d *sqlClusterDao) Save(ctx context.Context, cluster *api.Cluster) error {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	if err := g2.Omit(clause.Associations).Save(cluster).Error; err != nil {
 		db.MarkForRollback(ctx, err)
 		return err
@@ -67,7 +67,7 @@ func (d *sqlClusterDao) Save(ctx context.Context, cluster *api.Cluster) error {
 }
 
 func (d *sqlClusterDao) SaveStatusConditions(ctx context.Context, id string, statusConditions []byte) error {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	result := g2.Model(&api.Cluster{}).Where("id = ?", id).Update("status_conditions", statusConditions)
 	if result.Error != nil {
 		db.MarkForRollback(ctx, result.Error)
@@ -77,7 +77,7 @@ func (d *sqlClusterDao) SaveStatusConditions(ctx context.Context, id string, sta
 }
 
 func (d *sqlClusterDao) Delete(ctx context.Context, id string) error {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	if err := g2.Omit(clause.Associations).Delete(&api.Cluster{Meta: api.Meta{ID: id}}).Error; err != nil {
 		db.MarkForRollback(ctx, err)
 		return err
@@ -86,7 +86,7 @@ func (d *sqlClusterDao) Delete(ctx context.Context, id string) error {
 }
 
 func (d *sqlClusterDao) FindByIDs(ctx context.Context, ids []string) (api.ClusterList, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	clusters := api.ClusterList{}
 	if err := g2.Where("id in (?)", ids).Find(&clusters).Error; err != nil {
 		return nil, err
@@ -95,7 +95,7 @@ func (d *sqlClusterDao) FindByIDs(ctx context.Context, ids []string) (api.Cluste
 }
 
 func (d *sqlClusterDao) All(ctx context.Context) (api.ClusterList, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	clusters := api.ClusterList{}
 	if err := g2.Find(&clusters).Error; err != nil {
 		return nil, err

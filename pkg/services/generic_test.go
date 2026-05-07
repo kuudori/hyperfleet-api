@@ -22,7 +22,7 @@ func TestSQLTranslation(t *testing.T) {
 	var dbFactory db.SessionFactory = dbmocks.NewMockSessionFactory()
 	defer dbFactory.Close() //nolint:errcheck
 
-	g := dao.NewGenericDao(&dbFactory)
+	g := dao.NewGenericDao(dbFactory)
 	genericService := sqlGenericService{genericDao: g}
 
 	// ill-formatted search or disallowed fields should be rejected

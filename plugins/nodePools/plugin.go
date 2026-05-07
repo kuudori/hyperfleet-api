@@ -22,9 +22,9 @@ type ServiceLocator func() services.NodePoolService
 func NewServiceLocator(env *environments.Env) ServiceLocator {
 	return func() services.NodePoolService {
 		return services.NewNodePoolService(
-			dao.NewNodePoolDao(&env.Database.SessionFactory),
-			dao.NewClusterDao(&env.Database.SessionFactory),
-			dao.NewAdapterStatusDao(&env.Database.SessionFactory),
+			dao.NewNodePoolDao(env.Database.SessionFactory),
+			dao.NewClusterDao(env.Database.SessionFactory),
+			dao.NewAdapterStatusDao(env.Database.SessionFactory),
 			env.Config.Adapters,
 			generic.Service(&env.Services),
 		)

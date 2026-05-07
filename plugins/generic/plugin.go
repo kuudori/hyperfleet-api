@@ -12,7 +12,7 @@ type ServiceLocator func() services.GenericService
 
 func NewServiceLocator(env *environments.Env) ServiceLocator {
 	return func() services.GenericService {
-		return services.NewGenericService(dao.NewGenericDao(&env.Database.SessionFactory))
+		return services.NewGenericService(dao.NewGenericDao(env.Database.SessionFactory))
 	}
 }
 

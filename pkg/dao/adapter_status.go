@@ -29,15 +29,15 @@ type AdapterStatusDao interface {
 var _ AdapterStatusDao = &sqlAdapterStatusDao{}
 
 type sqlAdapterStatusDao struct {
-	sessionFactory *db.SessionFactory
+	sessionFactory db.SessionFactory
 }
 
-func NewAdapterStatusDao(sessionFactory *db.SessionFactory) AdapterStatusDao {
+func NewAdapterStatusDao(sessionFactory db.SessionFactory) AdapterStatusDao {
 	return &sqlAdapterStatusDao{sessionFactory: sessionFactory}
 }
 
 func (d *sqlAdapterStatusDao) Get(ctx context.Context, id string) (*api.AdapterStatus, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	var adapterStatus api.AdapterStatus
 	if err := g2.Take(&adapterStatus, "id = ?", id).Error; err != nil {
 		return nil, err
@@ -48,7 +48,7 @@ func (d *sqlAdapterStatusDao) Get(ctx context.Context, id string) (*api.AdapterS
 func (d *sqlAdapterStatusDao) Create(
 	ctx context.Context, adapterStatus *api.AdapterStatus,
 ) (*api.AdapterStatus, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	if err := g2.Omit(clause.Associations).Create(adapterStatus).Error; err != nil {
 		db.MarkForRollback(ctx, err)
 		return nil, err
@@ -59,7 +59,7 @@ func (d *sqlAdapterStatusDao) Create(
 func (d *sqlAdapterStatusDao) Upsert(
 	ctx context.Context, adapterStatus *api.AdapterStatus, existing *api.AdapterStatus,
 ) (*api.AdapterStatus, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 
 	if existing != nil {
 		updateResult := g2.Model(&api.AdapterStatus{}).
@@ -104,7 +104,7 @@ func (d *sqlAdapterStatusDao) Upsert(
 
 // Delete permanently removes the adapter status row from the database.
 func (d *sqlAdapterStatusDao) Delete(ctx context.Context, id string) error {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	adapterStatus := &api.AdapterStatus{Meta: api.Meta{ID: id}}
 	if err := g2.Omit(clause.Associations).Delete(adapterStatus).Error; err != nil {
 		db.MarkForRollback(ctx, err)
@@ -114,7 +114,7 @@ func (d *sqlAdapterStatusDao) Delete(ctx context.Context, id string) error {
 }
 
 func (d *sqlAdapterStatusDao) DeleteByResource(ctx context.Context, resourceType, resourceID string) error {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	if err := g2.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).
 		Delete(&api.AdapterStatus{}).Error; err != nil {
 		db.MarkForRollback(ctx, err)
@@ -126,7 +126,7 @@ func (d *sqlAdapterStatusDao) DeleteByResource(ctx context.Context, resourceType
 func (d *sqlAdapterStatusDao) FindByResource(
 	ctx context.Context, resourceType, resourceID string,
 ) (api.AdapterStatusList, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	statuses := api.AdapterStatusList{}
 	query := g2.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID)
 	if err := query.Find(&statuses).Error; err != nil {
@@ -138,7 +138,7 @@ func (d *sqlAdapterStatusDao) FindByResource(
 func (d *sqlAdapterStatusDao) FindByResourceIDs(
 	ctx context.Context, resourceType string, resourceIDs []string,
 ) (api.AdapterStatusList, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	statuses := api.AdapterStatusList{}
 	if len(resourceIDs) == 0 {
 		return statuses, nil
@@ -153,7 +153,7 @@ func (d *sqlAdapterStatusDao) FindByResourceIDs(
 func (d *sqlAdapterStatusDao) FindByResourcePaginated(
 	ctx context.Context, resourceType, resourceID string, offset, limit int,
 ) (api.AdapterStatusList, int64, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	statuses := api.AdapterStatusList{}
 	var total int64
 
@@ -176,7 +176,7 @@ func (d *sqlAdapterStatusDao) FindByResourcePaginated(
 func (d *sqlAdapterStatusDao) FindByResourceAndAdapter(
 	ctx context.Context, resourceType, resourceID, adapter string,
 ) (*api.AdapterStatus, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	var adapterStatus api.AdapterStatus
 	query := g2.Where("resource_type = ? AND resource_id = ? AND adapter = ?", resourceType, resourceID, adapter)
 	if err := query.Take(&adapterStatus).Error; err != nil {
@@ -186,7 +186,7 @@ func (d *sqlAdapterStatusDao) FindByResourceAndAdapter(
 }
 
 func (d *sqlAdapterStatusDao) All(ctx context.Context) (api.AdapterStatusList, error) {
-	g2 := (*d.sessionFactory).New(ctx)
+	g2 := d.sessionFactory.New(ctx)
 	statuses := api.AdapterStatusList{}
 	if err := g2.Find(&statuses).Error; err != nil {
 		return nil, err
