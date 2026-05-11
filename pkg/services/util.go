@@ -1,7 +1,9 @@
 package services
 
 import (
+	"encoding/json"
 	e "errors"
+	"reflect"
 	"strings"
 
 	"gorm.io/gorm"
@@ -9,6 +11,17 @@ import (
 	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/db"
 	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/errors"
 )
+
+func jsonEqual(a, b []byte) bool {
+	var va, vb any
+	if err := json.Unmarshal(a, &va); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &vb); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(va, vb)
+}
 
 // Field names suspected to contain personally identifiable information
 var piiFields = []string{

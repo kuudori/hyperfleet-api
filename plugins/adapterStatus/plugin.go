@@ -13,7 +13,7 @@ type ServiceLocator func() services.AdapterStatusService
 func NewServiceLocator(env *environments.Env) ServiceLocator {
 	return func() services.AdapterStatusService {
 		return services.NewAdapterStatusService(
-			dao.NewAdapterStatusDao(&env.Database.SessionFactory),
+			dao.NewAdapterStatusDao(env.Database.SessionFactory),
 		)
 	}
 }

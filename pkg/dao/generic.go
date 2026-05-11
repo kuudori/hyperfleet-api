@@ -41,7 +41,7 @@ type GenericDao interface {
 var _ GenericDao = &sqlGenericDao{}
 
 type sqlGenericDao struct {
-	sessionFactory *db.SessionFactory
+	sessionFactory db.SessionFactory
 	g2             *gorm.DB
 }
 
@@ -54,14 +54,14 @@ type TableRelation struct {
 	ForeignColumnName string
 }
 
-func NewGenericDao(sessionFactory *db.SessionFactory) GenericDao {
+func NewGenericDao(sessionFactory db.SessionFactory) GenericDao {
 	return &sqlGenericDao{sessionFactory: sessionFactory}
 }
 
 func (d *sqlGenericDao) GetInstanceDao(ctx context.Context, model interface{}) GenericDao {
 	return &sqlGenericDao{
 		sessionFactory: d.sessionFactory,
-		g2:             (*d.sessionFactory).New(ctx).Model(model),
+		g2:             d.sessionFactory.New(ctx).Model(model),
 	}
 }
 

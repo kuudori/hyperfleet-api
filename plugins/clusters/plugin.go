@@ -24,9 +24,10 @@ type ServiceLocator func() services.ClusterService
 func NewServiceLocator(env *environments.Env) ServiceLocator {
 	return func() services.ClusterService {
 		return services.NewClusterService(
-			dao.NewClusterDao(&env.Database.SessionFactory),
-			dao.NewNodePoolDao(&env.Database.SessionFactory),
-			dao.NewAdapterStatusDao(&env.Database.SessionFactory),
+			dao.NewClusterDao(env.Database.SessionFactory),
+			dao.NewNodePoolDao(env.Database.SessionFactory),
+			nodePools.Service(&env.Services),
+			dao.NewAdapterStatusDao(env.Database.SessionFactory),
 			env.Config.Adapters,
 		)
 	}
@@ -71,7 +72,6 @@ func init() {
 		clusterNodePoolsHandler := handlers.NewClusterNodePoolsHandler(
 			Service(envServices),
 			nodePools.Service(envServices),
-			generic.Service(envServices),
 		)
 		clustersRouter.HandleFunc("/{id}/nodepools", clusterNodePoolsHandler.List).Methods(http.MethodGet)
 		clustersRouter.HandleFunc("/{id}/nodepools", clusterNodePoolsHandler.Create).Methods(http.MethodPost)

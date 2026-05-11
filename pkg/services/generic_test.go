@@ -22,7 +22,7 @@ func TestSQLTranslation(t *testing.T) {
 	var dbFactory db.SessionFactory = dbmocks.NewMockSessionFactory()
 	defer dbFactory.Close() //nolint:errcheck
 
-	g := dao.NewGenericDao(&dbFactory)
+	g := dao.NewGenericDao(dbFactory)
 	genericService := sqlGenericService{genericDao: g}
 
 	// ill-formatted search or disallowed fields should be rejected
@@ -41,7 +41,7 @@ func TestSQLTranslation(t *testing.T) {
 		search := test["search"].(string)
 		errorMsg := test["error"].(string)
 		listCtx, model, serviceErr := genericService.newListContext(
-			context.Background(), "", &ListArguments{Search: search}, &list,
+			context.Background(), &ListArguments{Search: search}, &list,
 		)
 		Expect(serviceErr).ToNot(HaveOccurred())
 		d := g.GetInstanceDao(context.Background(), model)
@@ -78,7 +78,7 @@ func TestSQLTranslation(t *testing.T) {
 		sqlReal := test["sql"].(string)
 		valuesReal := test["values"].(types.GomegaMatcher)
 		listCtx, _, serviceErr := genericService.newListContext(
-			context.Background(), "", &ListArguments{Search: search}, &list,
+			context.Background(), &ListArguments{Search: search}, &list,
 		)
 		Expect(serviceErr).ToNot(HaveOccurred())
 		tslTree, err := tsl.ParseTSL(search)

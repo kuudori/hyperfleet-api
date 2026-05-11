@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/api"
@@ -17,8 +18,15 @@ import (
 type NodePoolService interface {
 	Get(ctx context.Context, id string) (*api.NodePool, *errors.ServiceError)
 	Create(ctx context.Context, nodePool *api.NodePool) (*api.NodePool, *errors.ServiceError)
-	Replace(ctx context.Context, nodePool *api.NodePool) (*api.NodePool, *errors.ServiceError)
+	Patch(ctx context.Context, id string, patch *api.NodePoolPatchRequest) (*api.NodePool, *errors.ServiceError)
+	GetByIDAndOwner(ctx context.Context, id string, ownerID string) (*api.NodePool, *errors.ServiceError)
+	ListByCluster(
+		ctx context.Context, clusterID string, args *ListArguments,
+	) (api.NodePoolList, *api.PagingMeta, *errors.ServiceError)
 	SoftDelete(ctx context.Context, id string) (*api.NodePool, *errors.ServiceError)
+	CascadeSoftDelete(
+		ctx context.Context, nodePools api.NodePoolList, deletedBy string, deletedTime time.Time,
+	) *errors.ServiceError
 	Delete(ctx context.Context, id string) *errors.ServiceError
 	All(ctx context.Context) (api.NodePoolList, *errors.ServiceError)
 
@@ -36,13 +44,17 @@ type NodePoolService interface {
 
 func NewNodePoolService(
 	nodePoolDao dao.NodePoolDao,
+	clusterDao dao.ClusterDao,
 	adapterStatusDao dao.AdapterStatusDao,
 	adapterConfig *config.AdapterRequirementsConfig,
+	generic GenericService,
 ) NodePoolService {
 	return &sqlNodePoolService{
 		nodePoolDao:      nodePoolDao,
+		clusterDao:       clusterDao,
 		adapterStatusDao: adapterStatusDao,
 		adapterConfig:    adapterConfig,
+		generic:          generic,
 	}
 }
 
@@ -50,8 +62,10 @@ var _ NodePoolService = &sqlNodePoolService{}
 
 type sqlNodePoolService struct {
 	nodePoolDao      dao.NodePoolDao
+	clusterDao       dao.ClusterDao
 	adapterStatusDao dao.AdapterStatusDao
 	adapterConfig    *config.AdapterRequirementsConfig
+	generic          GenericService
 }
 
 func (s *sqlNodePoolService) Get(ctx context.Context, id string) (*api.NodePool, *errors.ServiceError) {
@@ -63,6 +77,12 @@ func (s *sqlNodePoolService) Get(ctx context.Context, id string) (*api.NodePool,
 }
 
 func (s *sqlNodePoolService) Create(ctx context.Context, nodePool *api.NodePool) (*api.NodePool, *errors.ServiceError) {
+	if nodePool.CreatedBy == "" {
+		nodePool.CreatedBy = defaultSystemUser
+	}
+	if nodePool.UpdatedBy == "" {
+		nodePool.UpdatedBy = defaultSystemUser
+	}
 	if nodePool.Generation == 0 {
 		nodePool.Generation = 1
 	}
@@ -80,12 +100,33 @@ func (s *sqlNodePoolService) Create(ctx context.Context, nodePool *api.NodePool)
 	return updatedNodePool, nil
 }
 
-func (s *sqlNodePoolService) Replace(
-	ctx context.Context, nodePool *api.NodePool,
+func (s *sqlNodePoolService) Patch(
+	ctx context.Context, nodePoolID string, patch *api.NodePoolPatchRequest,
 ) (*api.NodePool, *errors.ServiceError) {
-	nodePool, err := s.nodePoolDao.Replace(ctx, nodePool)
+	nodePool, err := s.nodePoolDao.GetForUpdate(ctx, nodePoolID)
 	if err != nil {
-		return nil, handleUpdateError("NodePool", err)
+		return nil, handleGetError("NodePool", "id", nodePoolID, err)
+	}
+
+	if nodePool.DeletedTime != nil {
+		return nil, errors.ConflictState("NodePool '%s' is marked for deletion", nodePoolID)
+	}
+
+	oldSpec := nodePool.Spec
+	oldLabels := nodePool.Labels
+
+	if applyErr := applyNodePoolPatch(nodePool, patch); applyErr != nil {
+		return nil, errors.Validation("Invalid patch data: %v", applyErr)
+	}
+
+	if jsonEqual(oldSpec, nodePool.Spec) && jsonEqual(oldLabels, nodePool.Labels) {
+		return nodePool, nil
+	}
+
+	nodePool.IncrementGeneration()
+
+	if saveErr := s.nodePoolDao.Save(ctx, nodePool); saveErr != nil {
+		return nil, handleUpdateError("NodePool", saveErr)
 	}
 
 	updated, svcErr := s.UpdateNodePoolStatusFromAdapters(ctx, nodePool.ID)
@@ -95,33 +136,95 @@ func (s *sqlNodePoolService) Replace(
 	return updated, nil
 }
 
-func (s *sqlNodePoolService) SoftDelete(ctx context.Context, id string) (*api.NodePool, *errors.ServiceError) {
-	nodePool, err := s.nodePoolDao.GetForUpdate(ctx, id)
+func (s *sqlNodePoolService) GetByIDAndOwner(
+	ctx context.Context, nodePoolID string, clusterID string,
+) (*api.NodePool, *errors.ServiceError) {
+	nodePool, err := s.nodePoolDao.GetByIDAndOwner(ctx, nodePoolID, clusterID)
+	if err != nil {
+		return nil, handleGetError("NodePool", "id", nodePoolID, err)
+	}
+	return nodePool, nil
+}
+
+func (s *sqlNodePoolService) ListByCluster(
+	ctx context.Context, clusterID string, args *ListArguments,
+) (api.NodePoolList, *api.PagingMeta, *errors.ServiceError) {
+	if _, err := s.clusterDao.Get(ctx, clusterID); err != nil {
+		return nil, nil, handleGetError("Cluster", "id", clusterID, err)
+	}
+
+	if args.Search == "" {
+		args.Search = "owner_id = '" + clusterID + "'"
+	} else {
+		args.Search = "(" + args.Search + ") AND owner_id = '" + clusterID + "'"
+	}
+
+	var nodePools []api.NodePool
+	paging, svcErr := s.generic.List(ctx, args, &nodePools)
+	if svcErr != nil {
+		return nil, nil, svcErr
+	}
+
+	result := make(api.NodePoolList, len(nodePools))
+	for i := range nodePools {
+		result[i] = &nodePools[i]
+	}
+	return result, paging, nil
+}
+
+func (s *sqlNodePoolService) SoftDelete(ctx context.Context, nodePoolID string) (*api.NodePool, *errors.ServiceError) {
+	nodePool, err := s.nodePoolDao.GetForUpdate(ctx, nodePoolID)
 	if err != nil {
 		return nil, handleSoftDeleteError("NodePool", err)
 	}
 
-	// Already marked for deletion — return as-is (idempotent).
 	if nodePool.DeletedTime != nil {
 		return nodePool, nil
 	}
 
 	t := time.Now().UTC().Truncate(time.Microsecond)
-	deletedBy := "system@hyperfleet.local"
-	nodePool.DeletedTime = &t
-	nodePool.DeletedBy = &deletedBy
-	nodePool.Generation++
+	deletedBy := defaultSystemUser
+	nodePool.MarkDeleted(deletedBy, t)
+	nodePool.IncrementGeneration()
 
 	if err := s.nodePoolDao.Save(ctx, nodePool); err != nil {
 		return nil, handleSoftDeleteError("NodePool", err)
 	}
 
-	nodePool, svcErr := s.UpdateNodePoolStatusFromAdapters(ctx, nodePool.ID)
+	updated, svcErr := s.UpdateNodePoolStatusFromAdapters(ctx, nodePool.ID)
 	if svcErr != nil {
 		return nil, svcErr
 	}
 
-	return nodePool, nil
+	return updated, nil
+}
+
+func (s *sqlNodePoolService) CascadeSoftDelete(
+	ctx context.Context, nodePools api.NodePoolList, deletedBy string, deletedTime time.Time,
+) *errors.ServiceError {
+	if deletedBy == "" {
+		deletedBy = defaultSystemUser
+	}
+	if deletedTime.IsZero() {
+		deletedTime = time.Now().UTC().Truncate(time.Microsecond)
+	}
+
+	for _, np := range nodePools {
+		if np.DeletedTime == nil {
+			np.MarkDeleted(deletedBy, deletedTime)
+			np.IncrementGeneration()
+		}
+	}
+
+	if svcErr := recomputeNodePoolConditions(ctx, nodePools, s.adapterStatusDao, s.adapterConfig); svcErr != nil {
+		return svcErr
+	}
+
+	if err := s.nodePoolDao.SaveAll(ctx, nodePools); err != nil {
+		return handleSoftDeleteError("NodePool", err)
+	}
+
+	return nil
 }
 
 func (s *sqlNodePoolService) Delete(ctx context.Context, id string) *errors.ServiceError {
@@ -165,6 +268,24 @@ func (s *sqlNodePoolService) OnDelete(ctx context.Context, id string) error {
 	return nil
 }
 
+func applyNodePoolPatch(nodePool *api.NodePool, patch *api.NodePoolPatchRequest) error {
+	if patch.Spec != nil {
+		specJSON, err := json.Marshal(*patch.Spec)
+		if err != nil {
+			return fmt.Errorf("failed to marshal nodepool spec: %w", err)
+		}
+		nodePool.Spec = specJSON
+	}
+	if patch.Labels != nil {
+		labelsJSON, err := json.Marshal(*patch.Labels)
+		if err != nil {
+			return fmt.Errorf("failed to marshal nodepool labels: %w", err)
+		}
+		nodePool.Labels = labelsJSON
+	}
+	return nil
+}
+
 func nodePoolRefTime(np *api.NodePool) time.Time {
 	if np == nil {
 		return time.Time{}
@@ -176,7 +297,7 @@ func nodePoolRefTime(np *api.NodePool) time.Time {
 }
 
 // UpdateNodePoolStatusFromAdapters is the public entry point for callers outside
-// ProcessAdapterStatus (e.g. Create, Replace, SoftDelete) that don't already hold the node
+// ProcessAdapterStatus (e.g. Create, Patch, SoftDelete) that don't already hold the node
 // pool and adapter statuses.
 func (s *sqlNodePoolService) UpdateNodePoolStatusFromAdapters(
 	ctx context.Context, nodePoolID string,
