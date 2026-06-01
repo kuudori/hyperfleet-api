@@ -1,12 +1,34 @@
-# AGENTS.md
+# HyperFleet API — Agent Instructions
 
-This file provides guidance to AI coding agents working with the HyperFleet API repository.
+Stateless REST API serving as the pure CRUD data layer for HyperFleet cluster lifecycle management. Persists clusters, node pools, generic resources, and adapter statuses to PostgreSQL — no business logic, no events. Sentinel handles orchestration; adapters execute and report back.
 
-For Claude Code users: also see `CLAUDE.md` (auto-loaded) and `.claude/rules/` (loaded per file context).
+- **Language**: Go 1.24+ with FIPS crypto (`CGO_ENABLED=1 GOEXPERIMENT=boringcrypto`)
+- **Database**: PostgreSQL 14.2 with GORM ORM
+- **API Spec**: TypeSpec → `hyperfleet-api-spec` Go module → oapi-codegen → Go models
+- **Architecture**: Plugin-based route registration, transaction-per-request middleware
 
-## Commands
+**Request flow**: Router → Middleware (logging, auth, transaction) → Handler → Service → DAO → GORM → PostgreSQL
 
-### Setup (fresh clone)
+Transaction middleware creates GORM transactions for **write requests only** (POST/PUT/PATCH/DELETE). Read requests (GET) skip transaction creation. Status aggregation: service layer synthesizes `Available` and `Ready` conditions from adapter reports.
+
+## Verification
+
+**Generated code is not checked into git.** Run `make generate-all` before building, testing, or even `go mod download`.
+
+Run `make verify-all` before declaring work done. It runs everything without a database:
+
+| Target | What it does | Requires DB? |
+|---|---|---|
+| `make verify-all` | `verify` + `lint` + `test` (all-in-one) | No |
+| `make verify` | go vet + gofmt check | No |
+| `make lint` | golangci-lint (config: `.golangci.yml`) | No |
+| `make test` | Unit tests (`HYPERFLEET_ENV=unit_testing`) | No |
+| `make test-integration` | Integration tests (testcontainers) | No (auto-creates) |
+| `make test-helm` | Helm chart lint + template validation | No |
+| `make test-all` | `lint` + `test` + `test-integration` + `test-helm` | Auto-creates |
+
+Setup sequence for a fresh clone:
+
 ```
 make generate-all     # REQUIRED FIRST — generated code not in git
 go mod download
@@ -17,148 +39,101 @@ make build            # Build binary (CGO_ENABLED=1 GOEXPERIMENT=boringcrypto)
 make run-no-auth      # Start server without auth
 ```
 
-### Build & Run
-```
-make build            # Build hyperfleet-api binary to bin/
-make install          # Build and install to GOPATH/bin
-make run              # Build, migrate, and run with auth
-make run-no-auth      # Build, migrate, and run without auth
-```
+## Source of Truth
 
-### Code Generation
-```
-make generate         # Extract schema from hyperfleet-api-spec module, then run oapi-codegen
-make generate-mocks   # Regenerate mock implementations (go generate)
-make generate-all     # Both of the above
-```
+| Topic | Location |
+|---|---|
+| Entry point + subcommands (serve, migrate) | `cmd/hyperfleet-api/` |
+| Environment configs | `cmd/hyperfleet-api/environments/` |
+| HTTP handler pipeline | `pkg/handlers/framework.go` |
+| Cluster handlers | `pkg/handlers/cluster.go`, `cluster_nodepools.go`, `cluster_status.go` |
+| Node pool handlers | `pkg/handlers/node_pool.go`, `nodepool_status.go` |
+| Generic resource handler | `pkg/handlers/resource_handler.go` |
+| Request validation | `pkg/handlers/validation.go` |
+| Service interfaces + implementations | `pkg/services/` |
+| Generic resource service | `pkg/services/resource.go` |
+| Status aggregation logic | `pkg/services/aggregation.go` |
+| DAO interfaces + implementations | `pkg/dao/` |
+| Generic resource DAO | `pkg/dao/resource.go` |
+| Generated OpenAPI models + spec | `pkg/api/openapi/` (never edit) |
+| Presenters (API response formatting) | `pkg/api/presenters/` |
+| ServiceError type + RFC 9457 | `pkg/errors/errors.go` |
+| Structured logging | `pkg/logger/logger.go` |
+| SessionFactory + transaction middleware | `pkg/db/` |
+| Database migrations | `pkg/db/migrations/` (immutable after merge) |
+| Schema validation middleware | `pkg/middleware/schema_validation.go`, `pkg/validators/schema_validator.go` |
+| Configuration management | `pkg/config/` |
+| Plugin registration | `plugins/` — clusters, nodePools, adapterStatus, generic, resources, channels, versions |
+| OpenAPI spec import + codegen | `openapi/README.md` |
+| Test factories | `test/factories/` |
+| Integration tests | `test/integration/` |
+| Helm chart | `charts/` |
+| Tool versions (Bingo) | `.bingo/` |
 
-### Verification
-```
-make verify           # go vet + gofmt check
-make lint             # golangci-lint
-make test             # Unit tests (HYPERFLEET_ENV=unit_testing)
-make test-integration # Integration tests with testcontainers (HYPERFLEET_ENV=integration_testing)
-make test-helm        # Helm chart lint + template validation
-make verify-all       # verify + lint + test — fast, no DB needed
-make test-all         # lint + test + test-integration + test-helm — full suite
-```
-
-### Database
-```
-make db/setup         # Start PostgreSQL container
-make db/login         # Connect to local PostgreSQL
-make db/teardown      # Stop and remove container
-```
-
-Run `make help` for the complete target list.
-
-## Testing
-
-**Unit tests**: `make test` — sets `HYPERFLEET_ENV=unit_testing`, runs `./pkg/...` and `./cmd/...`
-
-**Integration tests**: `make test-integration` — sets `HYPERFLEET_ENV=integration_testing` and `TESTCONTAINERS_RYUK_DISABLED=true`. Testcontainers auto-creates isolated PostgreSQL instances. Located in `test/integration/`.
-
-**Helm tests**: `make test-helm` — lints and renders templates with multiple value combinations.
-
-**Mock generation**: `make generate-mocks` — uses `go generate` directives with `go.uber.org/mock/gomock`. Never write mocks manually.
-
-**Test factories**: `test/factories/` — create resources via the service layer, not directly in DB. Use `NewCluster()`, `NewClusterWithStatus()`, `NewClusterWithLabels()`.
-
-**Integration test setup**: `test.RegisterIntegration(t)` returns `(helper, client)`. Uses Gomega assertions and Resty HTTP client.
-
-**Environment variables for tests**:
-- `HYPERFLEET_ENV` — selects config: `unit_testing`, `integration_testing`, `development`
-- `TESTCONTAINERS_RYUK_DISABLED=true` — required in CI
-- `HYPERFLEET_CLUSTER_ADAPTERS` / `HYPERFLEET_NODEPOOL_ADAPTERS` — adapter lists (defaults set in TestMain)
-
-## Project Structure
-
-```
-cmd/hyperfleet-api/           # Entry point + subcommands (serve, migrate)
-  environments/               # Environment configs (development, unit_testing, etc.)
-pkg/
-  api/openapi/                # GENERATED — models + embedded spec (never edit)
-  handlers/                   # HTTP handlers using handlerConfig pipeline
-    framework.go              # handle/handleGet/handleList/handleDelete pipeline
-  services/                   # Service interfaces + sqlXxxService implementations
-  dao/                        # DAO interfaces + sqlXxxDao implementations
-  db/                         # SessionFactory, transaction middleware, migrations
-  errors/                     # ServiceError type, RFC 9457 Problem Details
-  logger/                     # Structured logging (slog-based)
-  config/                     # Configuration management
-plugins/                      # Plugin registration (init-based)
-  clusters/plugin.go          # RegisterService + RegisterRoutes + RegisterPath + RegisterKind
-  nodepools/plugin.go
-  generic/plugin.go
-openapi/
-  README.md                   # Schema import, code generation, and validation details
-  openapi.yaml                # Not in git — generated by make generate
-  oapi-codegen.yaml           # Code generation config
-test/
-  integration/                # Integration tests (testcontainers)
-  factories/                  # Test data factories
-charts/                       # Helm chart for Kubernetes deployment
-```
-
-**Generated code** (not in git — run `make generate-all`):
-- `pkg/api/openapi/` — Go models + embedded spec
-- `*_mock.go` — Mock implementations
-
-## Code Style
-
-### Imports
-Order: stdlib → external → internal (`github.com/openshift-hyperfleet/hyperfleet-api/...`)
+## Code Conventions
 
 ### Errors
-Use constructor functions from `pkg/errors/errors.go`: `NotFound()`, `Validation()`, `GeneralError()`, `Conflict()`, `ValidationWithDetails()`. Error codes: `HYPERFLEET-CAT-NUM` format. All service methods return `*errors.ServiceError`.
+
+All service methods return `*errors.ServiceError` (not stdlib error). Use constructor functions from `pkg/errors/errors.go`: `NotFound()`, `Validation()`, `GeneralError()`, `Conflict()`, `ValidationWithDetails()`. Error codes: `HYPERFLEET-CAT-NUM` format. Errors convert to RFC 9457 Problem Details via `AsProblemDetails()`.
 
 ### Logging
-Use `pkg/logger/` — `logger.Info(ctx, "msg")`, `logger.With(ctx, "key", val).Error("msg")`. Never use `fmt.Println` or `log.Print`.
+
+Use `pkg/logger/` — `logger.Info(ctx, "msg")`, `logger.With(ctx, "key", val).WithError(err).Error("msg")`. Never use `fmt.Println` or `log.Print`.
 
 ### Handlers
+
 Use `handlerConfig` pipeline from `pkg/handlers/framework.go`:
 - `handle(w, r, cfg, status)` — unmarshal → validate → action → respond
-- `handleGet/handleList/handleDelete` — no-body variants
+- `handleGet` / `handleList` / `handleDelete` — no-body variants
 - Validation: `func() *errors.ServiceError`; Action: `func() (interface{}, *errors.ServiceError)`
 
 ### Services
+
 Interface + `sql*Service` struct. Constructor injection of DAOs. Return `*errors.ServiceError`. Add `//go:generate mockgen` directive for mocks.
 
 ### DAOs
+
 Interface + `sql*Dao` struct. Get session via `sessionFactory.New(ctx)`. Call `db.MarkForRollback(ctx, err)` on write errors. Return stdlib `error`.
 
 ### Plugins
-Register via `init()`: `registry.RegisterService()`, `server.RegisterRoutes()`, `presenters.RegisterPath()`, `presenters.RegisterKind()`. See `plugins/clusters/plugin.go`.
 
-## Git Workflow
+Register via `init()`: `registry.RegisterService()`, `server.RegisterRoutes()`, `presenters.RegisterPath()`, `presenters.RegisterKind()`. See `plugins/clusters/plugin.go` as reference. Active plugins: clusters, nodePools, adapterStatus, generic, resources, channels, versions.
 
-### Commit Format
-```
-HYPERFLEET-### - type: description
-```
-Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
+### Generic Resources
 
-Add co-author line for AI-assisted commits:
-```
-Co-Authored-By: Claude <noreply@anthropic.com>
-```
+Descriptor-driven layer for resource types beyond clusters and node pools. `ResourceService` supports configurable delete policies per descriptor. `ResourceDao` and `ResourceHandler` follow the same interface patterns.
 
-### Pre-commit Hooks
-Install: `pre-commit install && pre-commit install --hook-type pre-push`
+### Tests
 
-Hooks:
-- `rh-pre-commit` — Red Hat security compliance (requires internal GitLab access; skip with `SKIP=rh-pre-commit`)
-- `validate-agents-md` — validates AGENTS.md exists (runs on push)
-- `ai-attribution-reminder` — reminds about AI co-author attribution
+- **Unit**: Gomega assertions with `RegisterTestingT(t)`. Factories in `test/factories/` create resources via service layer.
+- **Integration**: `test.RegisterIntegration(t)` returns `(helper, client)`. Testcontainers auto-creates isolated PostgreSQL.
+- **Mocks**: `make generate-mocks` — uses `go generate` directives with `go.uber.org/mock/gomock`. Never write mocks manually.
+- **Helm**: `make test-helm` — lints and renders templates with multiple value combinations.
 
-### Branching
-Create feature branches from `main`. PRs target `main`.
+## Gotchas
+
+- Generated code not in git — `make generate-all` MUST run before build/test/lint
+- Migration files are immutable after merge — create new migration files for schema changes
+- `status.phase` is calculated from adapter conditions — never set it manually
+- Tool versions managed by Bingo (`.bingo/`) — don't manually install oapi-codegen or golangci-lint
+- OpenAPI spec (`openapi/openapi.yaml`) not tracked in git — generated by `make generate` from `hyperfleet-api-spec` Go module
 
 ## Boundaries
 
-- **Never edit** `pkg/api/openapi/` or `*_mock.go` — regenerate with `make generate-all`
-- **Never set** `status.phase` manually — calculated from adapter conditions
-- **Never create** direct DB connections — use `SessionFactory.New(ctx)` for transaction participation
-- **FIPS required**: build with `CGO_ENABLED=1 GOEXPERIMENT=boringcrypto`
-- **Spec source of truth**: `hyperfleet-api-spec` Go module; update `go.mod` to change spec versions — see [openapi/README.md](openapi/README.md) for full details on schema import, code generation, and validation
-- **Tool versions** managed by Bingo (`.bingo/`) — don't manually install oapi-codegen or golangci-lint
+### DON'T
+
+- Edit files in `pkg/api/openapi/` — generated by `make generate`
+- Edit `*_mock.go` files — regenerate with `make generate-mocks`
+- Set `status.phase` manually — calculated from adapter conditions
+- Create direct DB connections — use `SessionFactory.New(ctx)` for transaction participation
+- Build without FIPS — always use `CGO_ENABLED=1 GOEXPERIMENT=boringcrypto`
+- Modify existing migration files — create new ones instead
+
+### DO
+
+- Run `make generate-all` before any build or test
+- Run `make verify-all` before declaring work done
+- Use `handlerConfig` pipeline for HTTP handlers
+- Use `*errors.ServiceError` for all service-layer errors
+- Use `logger.Info/Error(ctx, ...)` for structured logging
+- Follow plugin registration pattern in `plugins/*/plugin.go`
