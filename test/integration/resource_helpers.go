@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/openshift-hyperfleet/hyperfleet-api/cmd/hyperfleet-api/environments"
 	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/api"
 	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/services"
@@ -29,6 +30,21 @@ func checkResourceCount(ctx context.Context, h *test.Helper, ids []string, expec
 		return fmt.Errorf("expected %d resources, got %d", expected, count)
 	}
 	return nil
+}
+
+func createChannel(t *testing.T, svc services.ResourceService, name string) *api.Resource {
+	t.Helper()
+	channel := newChannelResource(name)
+	created, err := svc.Create(t.Context(), "Channel", channel)
+	if err != nil {
+		t.Fatalf("Failed to create channel: %v", err)
+	}
+	return created
+}
+
+func createChannelWithUniqueName(t *testing.T, svc services.ResourceService) *api.Resource {
+	t.Helper()
+	return createChannel(t, svc, fmt.Sprintf("channel-%s", uuid.NewString()[:8]))
 }
 
 // newChannelResource creates a Channel resource struct with default spec.

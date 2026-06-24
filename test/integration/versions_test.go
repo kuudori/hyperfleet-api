@@ -16,20 +16,6 @@ import (
 	_ "github.com/openshift-hyperfleet/hyperfleet-api/plugins/versions"
 )
 
-func createTestChannel(t *testing.T, svc services.ResourceService) *api.Resource {
-	t.Helper()
-	// unique string for channel name
-	uniqueSuffix := uuid.NewString()[:8]
-	channelName := fmt.Sprintf("channel-%s", uniqueSuffix)
-
-	channel := newChannelResource(channelName)
-	created, err := svc.Create(t.Context(), "Channel", channel)
-	if err != nil {
-		t.Fatalf("Failed to create channel: %v", err)
-	}
-	return created
-}
-
 func createTestVersion(t *testing.T, svc services.ResourceService, name, channelID string) *api.Resource {
 	t.Helper()
 	version := newVersionResource(name, channelID)
@@ -53,7 +39,7 @@ func expectCreateError(t *testing.T, svc services.ResourceService,
 func TestVersionCreate(t *testing.T) {
 	t.Run("UniqueConstraintPerChannel", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 
 		versionName := "4.17.0"
 		version1 := createTestVersion(t, svc, versionName, channel.ID)
@@ -67,8 +53,8 @@ func TestVersionCreate(t *testing.T) {
 	t.Run("SameVersionNameInDifferentChannels", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel1 := createTestChannel(t, svc)
-		channel2 := createTestChannel(t, svc)
+		channel1 := createChannelWithUniqueName(t, svc)
+		channel2 := createChannelWithUniqueName(t, svc)
 
 		versionName := "version"
 		version1 := createTestVersion(t, svc, versionName, channel1.ID)
@@ -81,7 +67,7 @@ func TestVersionCreate(t *testing.T) {
 	t.Run("EmptyName", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		version := newVersionResource("", channel.ID)
 		expectCreateError(t, svc, version, 400, "empty version name should fail")
 	})
@@ -114,7 +100,7 @@ func TestVersionCreate(t *testing.T) {
 	t.Run("WithLabels", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		version := newVersionResource("version-with-labels", channel.ID)
 		labels := map[string]string{
 			"environment": "test",
@@ -140,7 +126,7 @@ func TestVersionCreate(t *testing.T) {
 	t.Run("SetsTimestamps", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		before := time.Now()
 		version := createTestVersion(t, svc, "timestamp-test-version", channel.ID)
 		after := time.Now()
@@ -161,7 +147,7 @@ func TestVersionDelete(t *testing.T) {
 	t.Run("VersionDeleteWithChannel", func(t *testing.T) {
 		svc, h := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		version1 := createTestVersion(t, svc, "version1", channel.ID)
 		version2 := createTestVersion(t, svc, "version2", channel.ID)
 
@@ -191,7 +177,7 @@ func TestVersionDelete(t *testing.T) {
 	t.Run("RestrictParentDeleteWithActiveChild", func(t *testing.T) {
 		svc, h := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		version := createTestVersion(t, svc, "restrict-test", channel.ID)
 
 		// Attempt to delete parent with active child - should fail with 409
@@ -216,7 +202,7 @@ func TestVersionDelete(t *testing.T) {
 	t.Run("SetsDeletedTime", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		version := createTestVersion(t, svc, "delete-timestamp-test", channel.ID)
 
 		before := time.Now()
@@ -232,7 +218,7 @@ func TestVersionDelete(t *testing.T) {
 	t.Run("ReDeleteReturns404", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		version := createTestVersion(t, svc, "redelete-test", channel.ID)
 
 		// Delete once - should succeed
@@ -248,7 +234,7 @@ func TestVersionDelete(t *testing.T) {
 	t.Run("HardDeleteRemovesRow", func(t *testing.T) {
 		svc, h := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		version := createTestVersion(t, svc, "hard-delete-test", channel.ID)
 
 		// Delete the version
@@ -267,7 +253,7 @@ func TestVersionList(t *testing.T) {
 	t.Run("ListByOwnerID", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 
 		version1 := createTestVersion(t, svc, "version1", channel.ID)
 		version2 := createTestVersion(t, svc, "version2", channel.ID)
@@ -300,7 +286,7 @@ func TestVersionList(t *testing.T) {
 	t.Run("ListByLabel", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		uniqueLabel := uuid.NewString()[:8]
 
 		// Create version with unique label
@@ -353,7 +339,7 @@ func TestVersionList(t *testing.T) {
 	t.Run("Pagination", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		for i := range 15 {
 			version := createTestVersion(t, svc, fmt.Sprintf("version-%d", i), channel.ID)
 			Expect(version.ID).ToNot(BeEmpty())
@@ -378,7 +364,7 @@ func TestVersionList(t *testing.T) {
 	t.Run("ByOwner", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		version1 := createTestVersion(t, svc, "version1", channel.ID)
 		version2 := createTestVersion(t, svc, "version2", channel.ID)
 		version3 := createTestVersion(t, svc, "version3", channel.ID)
@@ -411,10 +397,10 @@ func TestVersionGet(t *testing.T) {
 	t.Run("ByOwnerWrongParent", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel1 := createTestChannel(t, svc)
+		channel1 := createChannelWithUniqueName(t, svc)
 		version := createTestVersion(t, svc, "version", channel1.ID)
 
-		channel2 := createTestChannel(t, svc)
+		channel2 := createChannelWithUniqueName(t, svc)
 
 		// Attempt to get version from channel2 (wrong parent)
 		_, svcErr := svc.GetByOwner(t.Context(), "Version", version.ID, channel2.ID)
@@ -433,7 +419,7 @@ func TestVersionGet(t *testing.T) {
 	t.Run("ByOwnerNotFound", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 
 		// Try to get non-existent version under a real parent
 		_, svcErr := svc.GetByOwner(t.Context(), "Version", "nonexistent-version-id", channel.ID)
@@ -444,7 +430,7 @@ func TestVersionGet(t *testing.T) {
 	t.Run("ByOwnerSuccess", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		version := createTestVersion(t, svc, "test-version", channel.ID)
 
 		// Get version by owner should succeed
@@ -474,7 +460,7 @@ func TestVersionPatch(t *testing.T) {
 	t.Run("SpecChanged", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		version := createTestVersion(t, svc, "patch-spec-test", channel.ID)
 		Expect(version.Generation).To(Equal(int32(1)), "initial generation should be 1")
 
@@ -507,7 +493,7 @@ func TestVersionPatch(t *testing.T) {
 	t.Run("LabelsOnly", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		version := createTestVersion(t, svc, "patch-labels-test", channel.ID)
 		Expect(version.Generation).To(Equal(int32(1)), "initial generation should be 1")
 
@@ -535,7 +521,7 @@ func TestVersionPatch(t *testing.T) {
 	t.Run("UpdatesTimestamps", func(t *testing.T) {
 		svc, _ := setupResourceTest(t)
 
-		channel := createTestChannel(t, svc)
+		channel := createChannelWithUniqueName(t, svc)
 		version := createTestVersion(t, svc, "timestamp-update-test", channel.ID)
 		originalUpdatedTime := version.UpdatedTime
 

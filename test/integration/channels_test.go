@@ -13,18 +13,6 @@ import (
 	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/services"
 )
 
-// Test helpers
-
-func createChannel(t *testing.T, svc services.ResourceService, name string) *api.Resource {
-	t.Helper()
-	channel := newChannelResource(name)
-	created, err := svc.Create(t.Context(), "Channel", channel)
-	if err != nil {
-		t.Fatalf("Failed to create channel: %v", err)
-	}
-	return created
-}
-
 // Channel Create
 func TestChannelCreate(t *testing.T) {
 	t.Run("UniqueConstraint", func(t *testing.T) {
