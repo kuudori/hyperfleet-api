@@ -183,10 +183,11 @@ func (l *ConfigLoader) validateConfig(config *ApplicationConfig) error {
 			return fmt.Errorf("server identity header validation failed: %w", valErr)
 		}
 		if config.Server.JWT.Enabled &&
+			len(config.Server.JWT.Issuers) == 0 &&
 			config.Server.JWK.CertFile == "" &&
 			config.Server.JWK.CertURL == "" {
 			return fmt.Errorf(
-				"server JWK validation failed: server.jwk.cert_file or server.jwk.cert_url required when jwt is enabled",
+				"server JWK validation failed: cert_file or cert_url required when jwt is enabled without per-issuer config",
 			)
 		}
 		if valErr := config.Health.Validate(); valErr != nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/openshift-hyperfleet/hyperfleet-api/cmd/hyperfleet-api/environments"
 	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/auth"
+	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/config"
 	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/logger"
 )
 
@@ -33,11 +34,12 @@ func NewAPIServer(tracingEnabled bool) Server {
 	var mainHandler http.Handler = mainRouter
 
 	if env().Config.Server.JWT.Enabled {
-		jwtHandler, err := auth.NewJWTHandler(context.Background(), auth.JWTHandlerConfig{
-			KeysFile:  env().Config.Server.JWK.CertFile,
-			KeysURL:   env().Config.Server.JWK.CertURL,
-			IssuerURL: env().Config.Server.JWT.IssuerURL,
-			Audience:  env().Config.Server.JWT.Audience,
+		ctx := context.Background()
+		validators, err := buildTokenValidators(ctx)
+		check(err, "Unable to create token validators")
+
+		jwtHandler, err := auth.NewJWTHandler(auth.JWTHandlerConfig{
+			Validators: validators,
 			PublicPaths: []string{
 				"^/api/hyperfleet/?$",
 				"^/api/hyperfleet/v1/?$",
@@ -121,6 +123,57 @@ func (s apiServer) Start() {
 	if err := env().Database.SessionFactory.Close(); err != nil {
 		logger.WithError(ctx, err).Error("Error closing database connection")
 	}
+}
+
+func buildTokenValidators(ctx context.Context) (map[string]auth.TokenValidator, error) {
+	cfg := env().Config.Server
+	issuers := cfg.JWT.ResolvedIssuers(cfg.JWK)
+
+	validators := make(map[string]auth.TokenValidator, len(issuers))
+	for _, ic := range issuers {
+		switch ic.Type {
+		case config.IssuerTypeJWKS:
+			v, err := auth.NewJWKSValidator(ctx, auth.JWKSValidatorConfig{
+				IssuerURL:         ic.IssuerURL,
+				Audience:          ic.Audience,
+				IdentityClaimName: ic.IdentityClaim,
+				KeysFile:          ic.JWKCertFile,
+				KeysURL:           ic.JWKCertURL,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to create JWKS validator for issuer %q: %w", ic.IssuerURL, err)
+			}
+			logger.With(ctx, "issuer", ic.IssuerURL).Info("Registered JWKS token validator")
+			validators[ic.IssuerURL] = v
+
+		case config.IssuerTypeK8sTokenReview:
+			v, err := auth.NewK8sTokenReviewValidator(auth.K8sValidatorConfig{
+				IssuerURL: ic.IssuerURL,
+				Audience:  ic.Audience,
+			})
+			if err != nil {
+				if ic.Optional {
+					logger.With(ctx, "issuer", ic.IssuerURL).WithError(err).Warn("k8s-token-review issuer skipped (optional: true)")
+					continue
+				}
+				return nil, fmt.Errorf(
+					"k8s-token-review validator for issuer %q failed (set optional: true to skip outside cluster): %w",
+					ic.IssuerURL, err,
+				)
+			}
+			logger.With(ctx, "issuer", ic.IssuerURL).Info("Registered k8s TokenReview validator")
+			validators[ic.IssuerURL] = v
+
+		default:
+			return nil, fmt.Errorf("unknown issuer type %q for issuer %q", ic.Type, ic.IssuerURL)
+		}
+	}
+
+	if len(validators) == 0 {
+		return nil, fmt.Errorf("jwt is enabled but no token validators could be created")
+	}
+
+	return validators, nil
 }
 
 func (s apiServer) Stop() error {

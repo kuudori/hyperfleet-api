@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -18,6 +19,52 @@ import (
 )
 
 const testKID = "test-key-1"
+const testIssuer = "https://test-issuer.example.com"
+
+func newTestHandler(
+	t *testing.T, validators map[string]TokenValidator, next http.Handler, publicPaths ...string,
+) *JWTHandler {
+	t.Helper()
+	h, err := NewJWTHandler(JWTHandlerConfig{
+		Validators:  validators,
+		PublicPaths: publicPaths,
+		Next:        next,
+	})
+	if err != nil {
+		t.Fatalf("failed to create JWTHandler: %v", err)
+	}
+	return h
+}
+
+func validatorMap(validators ...TokenValidator) map[string]TokenValidator {
+	m := make(map[string]TokenValidator, len(validators))
+	for _, v := range validators {
+		switch vt := v.(type) {
+		case *jwksValidator:
+			m[vt.issuerURL] = v
+		default:
+			panic("unsupported validator type in test helper")
+		}
+	}
+	return m
+}
+
+func newJWKSTestValidator(t *testing.T, keysURL, issuerURL string, opts ...func(*JWKSValidatorConfig)) TokenValidator {
+	t.Helper()
+	cfg := JWKSValidatorConfig{
+		KeysURL:   keysURL,
+		IssuerURL: issuerURL,
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	v, err := NewJWKSValidator(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("failed to create JWKSValidator: %v", err)
+	}
+	t.Cleanup(v.Close)
+	return v
+}
 
 func TestJWTHandler(t *testing.T) {
 	RegisterTestingT(t)
@@ -33,18 +80,13 @@ func TestJWTHandler(t *testing.T) {
 		fmt.Fprint(w, "ok")
 	})
 
-	handler, err := NewJWTHandler(t.Context(), JWTHandlerConfig{
-		KeysURL:     jwksServer.URL,
-		IssuerURL:   "https://test-issuer.example.com",
-		PublicPaths: []string{"^/healthz$", "^/openapi$"},
-		Next:        nextHandler,
-	})
-	Expect(err).NotTo(HaveOccurred())
+	validator := newJWKSTestValidator(t, jwksServer.URL, testIssuer)
+	handler := newTestHandler(t, validatorMap(validator), nextHandler, "^/healthz$", "^/openapi$")
 
 	t.Run("valid token passes through", func(t *testing.T) {
 		RegisterTestingT(t)
 		token := signToken(t, privateKey, jwt.MapClaims{
-			"iss": "https://test-issuer.example.com",
+			"iss": testIssuer,
 			"exp": time.Now().Add(time.Hour).Unix(),
 			"iat": time.Now().Unix(),
 		})
@@ -63,15 +105,10 @@ func TestJWTHandler(t *testing.T) {
 			Expect(claims["username"]).To(Equal("testuser"))
 			w.WriteHeader(http.StatusOK)
 		})
-		h, err := NewJWTHandler(t.Context(), JWTHandlerConfig{
-			KeysURL:   jwksServer.URL,
-			IssuerURL: "https://test-issuer.example.com",
-			Next:      claimsHandler,
-		})
-		Expect(err).NotTo(HaveOccurred())
+		h := newTestHandler(t, validatorMap(validator), claimsHandler)
 
 		token := signToken(t, privateKey, jwt.MapClaims{
-			"iss":      "https://test-issuer.example.com",
+			"iss":      testIssuer,
 			"exp":      time.Now().Add(time.Hour).Unix(),
 			"iat":      time.Now().Unix(),
 			"username": "testuser",
@@ -83,7 +120,7 @@ func TestJWTHandler(t *testing.T) {
 	t.Run("expired token returns 401", func(t *testing.T) {
 		RegisterTestingT(t)
 		token := signToken(t, privateKey, jwt.MapClaims{
-			"iss": "https://test-issuer.example.com",
+			"iss": testIssuer,
 			"exp": time.Now().Add(-time.Hour).Unix(),
 			"iat": time.Now().Add(-2 * time.Hour).Unix(),
 		})
@@ -96,7 +133,7 @@ func TestJWTHandler(t *testing.T) {
 		otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
 		Expect(err).NotTo(HaveOccurred())
 		token := signToken(t, otherKey, jwt.MapClaims{
-			"iss": "https://test-issuer.example.com",
+			"iss": testIssuer,
 			"exp": time.Now().Add(time.Hour).Unix(),
 			"iat": time.Now().Unix(),
 		})
@@ -124,7 +161,7 @@ func TestJWTHandler(t *testing.T) {
 	t.Run("lowercase bearer scheme accepted per RFC 7235", func(t *testing.T) {
 		RegisterTestingT(t)
 		token := signToken(t, privateKey, jwt.MapClaims{
-			"iss": "https://test-issuer.example.com",
+			"iss": testIssuer,
 			"exp": time.Now().Add(time.Hour).Unix(),
 			"iat": time.Now().Unix(),
 		})
@@ -161,7 +198,7 @@ func TestJWTHandler(t *testing.T) {
 	t.Run("HS256 signed token rejected", func(t *testing.T) {
 		RegisterTestingT(t)
 		claims := jwt.MapClaims{
-			"iss": "https://test-issuer.example.com",
+			"iss": testIssuer,
 			"exp": time.Now().Add(time.Hour).Unix(),
 			"iat": time.Now().Unix(),
 		}
@@ -169,6 +206,82 @@ func TestJWTHandler(t *testing.T) {
 		tokenString, err := tok.SignedString([]byte("secret-key-for-hmac"))
 		Expect(err).NotTo(HaveOccurred())
 		rr := serve(handler, "/protected", "Bearer "+tokenString)
+		Expect(rr.Code).To(Equal(http.StatusUnauthorized))
+	})
+}
+
+func TestJWTHandler_MultiIssuer(t *testing.T) {
+	RegisterTestingT(t)
+
+	key1, err := rsa.GenerateKey(rand.Reader, 2048)
+	Expect(err).NotTo(HaveOccurred())
+	key2, err := rsa.GenerateKey(rand.Reader, 2048)
+	Expect(err).NotTo(HaveOccurred())
+
+	jwksServer1 := newJWKSServer(t, &key1.PublicKey)
+	defer jwksServer1.Close()
+	jwksServer2 := newJWKSServer(t, &key2.PublicKey)
+	defer jwksServer2.Close()
+
+	issuer1 := "https://issuer-one.example.com"
+	issuer2 := "https://issuer-two.example.com"
+
+	v1 := newJWKSTestValidator(t, jwksServer1.URL, issuer1, func(c *JWKSValidatorConfig) {
+		c.IdentityClaimName = "email"
+	})
+	v2 := newJWKSTestValidator(t, jwksServer2.URL, issuer2, func(c *JWKSValidatorConfig) {
+		c.IdentityClaimName = "sub"
+	})
+
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identity := GetResolvedIdentityFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, identity)
+	})
+
+	handler := newTestHandler(t, validatorMap(v1, v2), nextHandler)
+
+	t.Run("routes to first issuer and resolves email", func(t *testing.T) {
+		RegisterTestingT(t)
+		token := signToken(t, key1, jwt.MapClaims{
+			"iss":   issuer1,
+			"email": "user@example.com",
+			"exp":   time.Now().Add(time.Hour).Unix(),
+		})
+		rr := serve(handler, "/protected", "Bearer "+token)
+		Expect(rr.Code).To(Equal(http.StatusOK))
+		Expect(rr.Body.String()).To(Equal("user@example.com"))
+	})
+
+	t.Run("routes to second issuer and resolves sub", func(t *testing.T) {
+		RegisterTestingT(t)
+		token := signToken(t, key2, jwt.MapClaims{
+			"iss": issuer2,
+			"sub": "system:serviceaccount:ns:sa",
+			"exp": time.Now().Add(time.Hour).Unix(),
+		})
+		rr := serve(handler, "/protected", "Bearer "+token)
+		Expect(rr.Code).To(Equal(http.StatusOK))
+		Expect(rr.Body.String()).To(Equal("system:serviceaccount:ns:sa"))
+	})
+
+	t.Run("unknown issuer returns 401", func(t *testing.T) {
+		RegisterTestingT(t)
+		token := signToken(t, key1, jwt.MapClaims{
+			"iss": "https://unknown.example.com",
+			"exp": time.Now().Add(time.Hour).Unix(),
+		})
+		rr := serve(handler, "/protected", "Bearer "+token)
+		Expect(rr.Code).To(Equal(http.StatusUnauthorized))
+	})
+
+	t.Run("token signed by wrong key for matched issuer returns 401", func(t *testing.T) {
+		RegisterTestingT(t)
+		token := signToken(t, key2, jwt.MapClaims{
+			"iss": issuer1,
+			"exp": time.Now().Add(time.Hour).Unix(),
+		})
+		rr := serve(handler, "/protected", "Bearer "+token)
 		Expect(rr.Code).To(Equal(http.StatusUnauthorized))
 	})
 }
@@ -184,32 +297,18 @@ func TestJWTHandler_FailClosed_NoValidKeys(t *testing.T) {
 	}))
 	defer badServer.Close()
 
-	handler, err := NewJWTHandler(t.Context(), JWTHandlerConfig{
-		KeysURL:   badServer.URL,
-		IssuerURL: "https://test-issuer.example.com",
-		Next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}),
+	validator := newJWKSTestValidator(t, badServer.URL, testIssuer)
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
 	})
-	Expect(err).NotTo(HaveOccurred())
+	handler := newTestHandler(t, validatorMap(validator), okHandler)
 
 	token := signToken(t, privateKey, jwt.MapClaims{
-		"iss": "https://test-issuer.example.com",
+		"iss": testIssuer,
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	rr := serve(handler, "/protected", "Bearer "+token)
 	Expect(rr.Code).To(Equal(http.StatusUnauthorized))
-}
-
-func TestJWTHandler_RequiresKeysConfig(t *testing.T) {
-	RegisterTestingT(t)
-
-	_, err := NewJWTHandler(t.Context(), JWTHandlerConfig{
-		IssuerURL: "https://test-issuer.example.com",
-		Next:      http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
-	})
-	Expect(err).To(HaveOccurred())
-	Expect(err.Error()).To(ContainSubstring("KeysFile or KeysURL"))
 }
 
 func TestJWTHandler_WithAudience(t *testing.T) {
@@ -221,20 +320,18 @@ func TestJWTHandler_WithAudience(t *testing.T) {
 	jwksServer := newJWKSServer(t, &privateKey.PublicKey)
 	defer jwksServer.Close()
 
-	handler, err := NewJWTHandler(t.Context(), JWTHandlerConfig{
-		KeysURL:   jwksServer.URL,
-		IssuerURL: "https://test-issuer.example.com",
-		Audience:  "my-api",
-		Next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}),
+	validator := newJWKSTestValidator(t, jwksServer.URL, testIssuer, func(c *JWKSValidatorConfig) {
+		c.Audience = "my-api"
 	})
-	Expect(err).NotTo(HaveOccurred())
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := newTestHandler(t, validatorMap(validator), okHandler)
 
 	t.Run("correct audience passes", func(t *testing.T) {
 		RegisterTestingT(t)
 		token := signToken(t, privateKey, jwt.MapClaims{
-			"iss": "https://test-issuer.example.com",
+			"iss": testIssuer,
 			"aud": "my-api",
 			"exp": time.Now().Add(time.Hour).Unix(),
 		})
@@ -245,7 +342,7 @@ func TestJWTHandler_WithAudience(t *testing.T) {
 	t.Run("wrong audience returns 401", func(t *testing.T) {
 		RegisterTestingT(t)
 		token := signToken(t, privateKey, jwt.MapClaims{
-			"iss": "https://test-issuer.example.com",
+			"iss": testIssuer,
 			"aud": "wrong-api",
 			"exp": time.Now().Add(time.Hour).Unix(),
 		})
@@ -263,17 +360,14 @@ func TestJWTHandler_WithoutAudience_AcceptsAny(t *testing.T) {
 	jwksServer := newJWKSServer(t, &privateKey.PublicKey)
 	defer jwksServer.Close()
 
-	handler, err := NewJWTHandler(t.Context(), JWTHandlerConfig{
-		KeysURL:   jwksServer.URL,
-		IssuerURL: "https://test-issuer.example.com",
-		Next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}),
+	validator := newJWKSTestValidator(t, jwksServer.URL, testIssuer)
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
 	})
-	Expect(err).NotTo(HaveOccurred())
+	handler := newTestHandler(t, validatorMap(validator), okHandler)
 
 	token := signToken(t, privateKey, jwt.MapClaims{
-		"iss": "https://test-issuer.example.com",
+		"iss": testIssuer,
 		"aud": "any-audience",
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
@@ -289,20 +383,22 @@ func TestJWTHandler_FileOnlyKeyfunc(t *testing.T) {
 
 	jwksFile := writeJWKSFile(t, &privateKey.PublicKey)
 
-	handler, err := NewJWTHandler(t.Context(), JWTHandlerConfig{
+	v, err := NewJWKSValidator(t.Context(), JWKSValidatorConfig{
 		KeysFile:  jwksFile,
-		IssuerURL: "https://test-issuer.example.com",
-		Next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, "ok")
-		}),
+		IssuerURL: testIssuer,
 	})
 	Expect(err).NotTo(HaveOccurred())
+	t.Cleanup(v.Close)
+
+	handler := newTestHandler(t, validatorMap(v), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "ok")
+	}))
 
 	t.Run("valid token accepted via file keys", func(t *testing.T) {
 		RegisterTestingT(t)
 		token := signToken(t, privateKey, jwt.MapClaims{
-			"iss": "https://test-issuer.example.com",
+			"iss": testIssuer,
 			"exp": time.Now().Add(time.Hour).Unix(),
 			"iat": time.Now().Unix(),
 		})
@@ -316,7 +412,7 @@ func TestJWTHandler_FileOnlyKeyfunc(t *testing.T) {
 		otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
 		Expect(err).NotTo(HaveOccurred())
 		token := signToken(t, otherKey, jwt.MapClaims{
-			"iss": "https://test-issuer.example.com",
+			"iss": testIssuer,
 			"exp": time.Now().Add(time.Hour).Unix(),
 			"iat": time.Now().Unix(),
 		})
@@ -335,15 +431,17 @@ func TestJWTHandler_CombinedKeyfunc(t *testing.T) {
 	jwksServer := newJWKSServer(t, &fileKey.PublicKey)
 	defer jwksServer.Close()
 
-	handler, err := NewJWTHandler(t.Context(), JWTHandlerConfig{
+	v, err := NewJWKSValidator(t.Context(), JWKSValidatorConfig{
 		KeysFile:  jwksFile,
 		KeysURL:   jwksServer.URL,
-		IssuerURL: "https://test-issuer.example.com",
-		Next: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}),
+		IssuerURL: testIssuer,
 	})
 	Expect(err).NotTo(HaveOccurred())
+	t.Cleanup(v.Close)
+
+	handler := newTestHandler(t, validatorMap(v), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
 
 	t.Run("constructor succeeds with both file and URL", func(t *testing.T) {
 		RegisterTestingT(t)
@@ -353,7 +451,7 @@ func TestJWTHandler_CombinedKeyfunc(t *testing.T) {
 	t.Run("file key accepted in combined mode", func(t *testing.T) {
 		RegisterTestingT(t)
 		token := signToken(t, fileKey, jwt.MapClaims{
-			"iss": "https://test-issuer.example.com",
+			"iss": testIssuer,
 			"exp": time.Now().Add(time.Hour).Unix(),
 		})
 		rr := serve(handler, "/protected", "Bearer "+token)
@@ -365,7 +463,7 @@ func TestJWTHandler_CombinedKeyfunc(t *testing.T) {
 		otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
 		Expect(err).NotTo(HaveOccurred())
 		token := signToken(t, otherKey, jwt.MapClaims{
-			"iss": "https://test-issuer.example.com",
+			"iss": testIssuer,
 			"exp": time.Now().Add(time.Hour).Unix(),
 		})
 		rr := serve(handler, "/protected", "Bearer "+token)
@@ -382,12 +480,13 @@ func TestJWTHandler_Close(t *testing.T) {
 	jwksServer := newJWKSServer(t, &privateKey.PublicKey)
 	defer jwksServer.Close()
 
-	handler, err := NewJWTHandler(t.Context(), JWTHandlerConfig{
+	v, err := NewJWKSValidator(t.Context(), JWKSValidatorConfig{
 		KeysURL:   jwksServer.URL,
-		IssuerURL: "https://test-issuer.example.com",
-		Next:      http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+		IssuerURL: testIssuer,
 	})
 	Expect(err).NotTo(HaveOccurred())
+
+	handler := newTestHandler(t, validatorMap(v), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
 	handler.Close()
 	handler.Close() // idempotent, should not panic
@@ -402,12 +501,11 @@ func TestJWTHandler_ResponseBody(t *testing.T) {
 	jwksServer := newJWKSServer(t, &privateKey.PublicKey)
 	defer jwksServer.Close()
 
-	handler, err := NewJWTHandler(t.Context(), JWTHandlerConfig{
-		KeysURL:   jwksServer.URL,
-		IssuerURL: "https://test-issuer.example.com",
-		Next:      http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }),
+	validator := newJWKSTestValidator(t, jwksServer.URL, testIssuer)
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
 	})
-	Expect(err).NotTo(HaveOccurred())
+	handler := newTestHandler(t, validatorMap(validator), okHandler)
 
 	t.Run("missing header returns problem+json with no-credentials code", func(t *testing.T) {
 		RegisterTestingT(t)
@@ -424,7 +522,7 @@ func TestJWTHandler_ResponseBody(t *testing.T) {
 	t.Run("expired token returns problem+json with expired code", func(t *testing.T) {
 		RegisterTestingT(t)
 		token := signToken(t, privateKey, jwt.MapClaims{
-			"iss": "https://test-issuer.example.com",
+			"iss": testIssuer,
 			"exp": time.Now().Add(-time.Hour).Unix(),
 			"iat": time.Now().Add(-2 * time.Hour).Unix(),
 		})
@@ -461,6 +559,41 @@ func TestJWTHandler_ResponseBody(t *testing.T) {
 		Expect(body["code"]).To(Equal("HYPERFLEET-AUT-002"))
 		Expect(body["status"]).To(BeNumerically("==", 401))
 	})
+}
+
+func TestJWKSValidator_RequiresKeysConfig(t *testing.T) {
+	RegisterTestingT(t)
+
+	_, err := NewJWKSValidator(context.Background(), JWKSValidatorConfig{
+		IssuerURL: testIssuer,
+	})
+	Expect(err).To(HaveOccurred())
+	Expect(err.Error()).To(ContainSubstring("KeysFile or KeysURL"))
+}
+
+func TestJWKSValidator_RejectsMissingIdentityClaim(t *testing.T) {
+	RegisterTestingT(t)
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	Expect(err).NotTo(HaveOccurred())
+
+	jwksServer := newJWKSServer(t, &privateKey.PublicKey)
+	defer jwksServer.Close()
+
+	v := newJWKSTestValidator(t, jwksServer.URL, testIssuer, func(c *JWKSValidatorConfig) {
+		c.IdentityClaimName = "email"
+	})
+
+	token := signToken(t, privateKey, jwt.MapClaims{
+		"iss": testIssuer,
+		"sub": "client-credentials-grant",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+
+	_, _, err = v.Validate(context.Background(), token)
+	Expect(err).To(HaveOccurred())
+	Expect(err.Error()).To(ContainSubstring("missing required identity claim"))
+	Expect(err.Error()).To(ContainSubstring("email"))
 }
 
 // --- helpers ---

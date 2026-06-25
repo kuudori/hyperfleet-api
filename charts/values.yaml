@@ -75,6 +75,17 @@ config:
       audience: ""
       # -- JWT claim used as the caller identity
       identity_claim: email
+      issuers: []
+      # Example multi-issuer config:
+      # issuers:
+      #   - issuer_url: "https://accounts.google.com"
+      #     type: jwks
+      #     audience: "my-api"
+      #     identity_claim: email
+      #     jwk_cert_url: "https://www.googleapis.com/oauth2/v3/certs"
+      #   - issuer_url: "https://kubernetes.default.svc.cluster.local"
+      #     type: k8s-token-review
+      #     identity_claim: sub
 
     # -- HTTP header used to pass caller identity (bypasses JWT when set)
     identity_header: ""

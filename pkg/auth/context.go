@@ -11,8 +11,9 @@ import (
 type contextKey string
 
 const (
-	ContextUsernameKey contextKey = "username"
-	ContextJWTTokenKey contextKey = "jwt_token"
+	ContextUsernameKey         contextKey = "username"
+	ContextJWTTokenKey         contextKey = "jwt_token"
+	ContextResolvedIdentityKey contextKey = "resolved_identity"
 
 	// DefaultJWTIdentityClaim is used when server.jwt.identity_claim is unset.
 	DefaultJWTIdentityClaim = "email"
@@ -53,6 +54,21 @@ func GetJWTTokenFromContext(ctx context.Context) *jwt.Token {
 		return nil
 	}
 	return token
+}
+
+// SetResolvedIdentityContext stores the caller identity resolved by the JWT handler.
+func SetResolvedIdentityContext(ctx context.Context, identity string) context.Context {
+	return context.WithValue(ctx, ContextResolvedIdentityKey, identity)
+}
+
+// GetResolvedIdentityFromContext returns the caller identity resolved by the JWT handler,
+// or empty string if not set.
+func GetResolvedIdentityFromContext(ctx context.Context) string {
+	identity, ok := ctx.Value(ContextResolvedIdentityKey).(string)
+	if !ok {
+		return ""
+	}
+	return identity
 }
 
 func GetAuthPayloadFromContext(ctx context.Context) (*Payload, error) {
@@ -145,7 +161,7 @@ func GetIdentityFromContext(ctx context.Context, identityClaim string) (string, 
 	}
 
 	switch identityClaim {
-	case "email":
+	case DefaultJWTIdentityClaim:
 		if payload.Email != "" {
 			return payload.Email, nil
 		}

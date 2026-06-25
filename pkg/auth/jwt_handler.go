@@ -1,93 +1,56 @@
 package auth
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
-	"time"
 
-	"github.com/MicahParks/jwkset"
-	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
 
 	hferrors "github.com/openshift-hyperfleet/hyperfleet-api/pkg/errors"
 	"github.com/openshift-hyperfleet/hyperfleet-api/pkg/logger"
 )
 
-const (
-	defaultSigningAlgorithm = "RS256"
-	defaultLeeway           = 30 * time.Second
-)
-
+// JWTHandlerConfig configures the multi-issuer JWT handler.
 type JWTHandlerConfig struct {
 	Next        http.Handler
-	KeysFile    string
-	KeysURL     string
-	IssuerURL   string
-	Audience    string
+	Validators  map[string]TokenValidator
 	PublicPaths []string
 }
 
-func NewJWTHandler(ctx context.Context, cfg JWTHandlerConfig) (*JWTHandler, error) {
-	ctx, cancel := context.WithCancel(ctx)
-
-	kf, err := buildKeyfunc(ctx, cfg)
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to build JWKS keyfunc: %w", err)
-	}
-
+// NewJWTHandler creates a handler that routes tokens to the correct validator
+// based on the iss claim and stores the validated token + resolved identity
+// in the request context.
+func NewJWTHandler(cfg JWTHandlerConfig) (*JWTHandler, error) {
 	publicPatterns := make([]*regexp.Regexp, 0, len(cfg.PublicPaths))
 	for _, p := range cfg.PublicPaths {
 		re, err := regexp.Compile(p)
 		if err != nil {
-			cancel()
 			return nil, fmt.Errorf("invalid public path pattern %q: %w", p, err)
 		}
 		publicPatterns = append(publicPatterns, re)
 	}
 
-	parserOpts := []jwt.ParserOption{
-		jwt.WithValidMethods([]string{defaultSigningAlgorithm}),
-		jwt.WithExpirationRequired(),
-		jwt.WithLeeway(defaultLeeway),
-	}
-	if cfg.IssuerURL != "" {
-		parserOpts = append(parserOpts, jwt.WithIssuer(cfg.IssuerURL))
-	} else {
-		logger.Warn(ctx, "JWT issuer validation disabled: no issuer_url configured")
-	}
-	if cfg.Audience != "" {
-		parserOpts = append(parserOpts, jwt.WithAudience(cfg.Audience))
-	}
-
 	return &JWTHandler{
-		keyfunc:        kf,
-		parser:         jwt.NewParser(parserOpts...),
+		validators:     cfg.Validators,
 		publicPatterns: publicPatterns,
 		next:           cfg.Next,
-		cancel:         cancel,
 	}, nil
 }
 
-// JWTHandler validates JWT tokens on incoming requests. Call Close() during
-// shutdown to stop the background JWKS refresh goroutine.
+// JWTHandler validates JWT tokens by routing to issuer-specific validators.
+// Call Close() during shutdown to release validator resources.
 type JWTHandler struct {
-	keyfunc        keyfunc.Keyfunc
+	validators     map[string]TokenValidator
 	next           http.Handler
-	parser         *jwt.Parser
-	cancel         context.CancelFunc
 	publicPatterns []*regexp.Regexp
 }
 
 func (h *JWTHandler) Close() {
-	if h.cancel != nil {
-		h.cancel()
+	for _, v := range h.validators {
+		v.Close()
 	}
 }
 
@@ -112,7 +75,21 @@ func (h *JWTHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	tokenString := parts[1]
 
-	token, err := h.parser.Parse(tokenString, h.keyfunc.Keyfunc)
+	issuer, err := peekIssuer(tokenString)
+	if err != nil {
+		logger.WithError(r.Context(), err).Warn("failed to extract issuer from token")
+		handleError(r.Context(), w, r, hferrors.CodeAuthInvalidCredentials, "unable to determine token issuer")
+		return
+	}
+
+	validator, ok := h.validators[issuer]
+	if !ok {
+		msg := fmt.Sprintf("token issuer %q is not recognized", issuer)
+		handleError(r.Context(), w, r, hferrors.CodeAuthInvalidCredentials, msg)
+		return
+	}
+
+	identity, token, err := validator.Validate(r.Context(), tokenString)
 	if err != nil {
 		logger.WithError(r.Context(), err).Warn("JWT validation failed")
 		if errors.Is(err, jwt.ErrTokenExpired) {
@@ -124,62 +101,8 @@ func (h *JWTHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := SetJWTTokenContext(r.Context(), token)
+	if identity != "" {
+		ctx = SetResolvedIdentityContext(ctx, identity)
+	}
 	h.next.ServeHTTP(w, r.WithContext(ctx))
-}
-
-func buildKeyfunc(ctx context.Context, cfg JWTHandlerConfig) (keyfunc.Keyfunc, error) {
-	hasFile := cfg.KeysFile != ""
-	hasURL := cfg.KeysURL != ""
-
-	if !hasFile && !hasURL {
-		return nil, fmt.Errorf("at least one of KeysFile or KeysURL must be provided")
-	}
-
-	if hasFile && !hasURL {
-		data, err := os.ReadFile(cfg.KeysFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read JWKS file %q: %w", cfg.KeysFile, err)
-		}
-		kf, err := keyfunc.NewJWKSetJSON(json.RawMessage(data))
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse JWKS file %q: %w", cfg.KeysFile, err)
-		}
-		return kf, nil
-	}
-
-	if !hasFile && hasURL {
-		kf, err := keyfunc.NewDefaultCtx(ctx, []string{cfg.KeysURL})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create JWKS client from URL %q: %w", cfg.KeysURL, err)
-		}
-		return kf, nil
-	}
-
-	data, err := os.ReadFile(cfg.KeysFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read JWKS file %q: %w", cfg.KeysFile, err)
-	}
-	fileKF, err := keyfunc.NewJWKSetJSON(json.RawMessage(data))
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse JWKS file: %w", err)
-	}
-
-	httpStorage, err := jwkset.NewHTTPClient(jwkset.HTTPClientOptions{
-		Given: fileKF.Storage(),
-		HTTPURLs: map[string]jwkset.Storage{
-			cfg.KeysURL: jwkset.NewMemoryStorage(),
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP JWKS client: %w", err)
-	}
-
-	kf, err := keyfunc.New(keyfunc.Options{
-		Ctx:     ctx,
-		Storage: httpStorage,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create combined JWKS keyfunc: %w", err)
-	}
-	return kf, nil
 }

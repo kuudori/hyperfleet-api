@@ -31,6 +31,28 @@ data:
         issuer_url: {{ .Values.config.server.jwt.issuer_url | quote }}
         audience: {{ .Values.config.server.jwt.audience | quote }}
         identity_claim: {{ .Values.config.server.jwt.identity_claim | quote }}
+{{- if .Values.config.server.jwt.issuers }}
+        issuers:
+{{- range .Values.config.server.jwt.issuers }}
+          - issuer_url: {{ .issuer_url | quote }}
+            type: {{ .type | quote }}
+            {{- if .audience }}
+            audience: {{ .audience | quote }}
+            {{- end }}
+            {{- if .identity_claim }}
+            identity_claim: {{ .identity_claim | quote }}
+            {{- end }}
+            {{- if .jwk_cert_file }}
+            jwk_cert_file: {{ .jwk_cert_file | quote }}
+            {{- end }}
+            {{- if .jwk_cert_url }}
+            jwk_cert_url: {{ .jwk_cert_url | quote }}
+            {{- end }}
+            {{- if .optional }}
+            optional: {{ .optional }}
+            {{- end }}
+{{- end }}
+{{- end }}
 
       identity_header: {{ .Values.config.server.identity_header | quote }}
 

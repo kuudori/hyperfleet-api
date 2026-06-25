@@ -36,6 +36,10 @@ func CallerIdentityFromRequest(ctx context.Context, r *http.Request, cfg CallerI
 		}
 	}
 
+	if resolved := GetResolvedIdentityFromContext(ctx); resolved != "" {
+		return normalizeIdentity(resolved, "JWT-resolved identity")
+	}
+
 	if cfg.JWTIdentityClaim != "" {
 		raw, err := GetIdentityFromContext(ctx, cfg.JWTIdentityClaim)
 		if err != nil {
