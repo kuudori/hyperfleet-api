@@ -11,6 +11,9 @@ GO ?= go
 TOOL_MOD := tools/go.mod
 gotool = "$(GO)" tool -modfile="$(TOOL_MOD)" $(1)
 
+# hyperfleet-hooks binary used by verify-tekton-bundles; override with a path
+HYPERFLEET_HOOKS ?= hyperfleet-hooks
+
 # Auto-detect container tool (podman preferred when available)
 CONTAINER_TOOL ?= $(shell command -v podman 2>/dev/null || command -v docker 2>/dev/null)
 
@@ -119,6 +122,11 @@ lint: generate-all ## Run golangci-lint
 .PHONY: verify-migrations
 verify-migrations: ## Verify migration files follow project conventions
 	@hack/verify-migrations.sh
+
+.PHONY: verify-tekton-bundles
+verify-tekton-bundles: ## Verify pinned Konflux task bundle digests in .tekton/ (needs hyperfleet-hooks v0.3.0+)
+	@command -v $(HYPERFLEET_HOOKS) >/dev/null 2>&1 || { echo "hyperfleet-hooks not found. Install it with 'go install github.com/openshift-hyperfleet/hyperfleet-hooks/cmd/hyperfleet-hooks@v0.3.0' or set HYPERFLEET_HOOKS=/path/to/hyperfleet-hooks"; exit 1; }
+	$(HYPERFLEET_HOOKS) verify-tekton-bundles --directory .tekton
 
 .PHONY: tools
 tools: ## Ensure tool dependencies are up to date
